@@ -1,0 +1,9 @@
+# === Ignore local run outputs ===
+__pycache__/
+
+# === IDE / virtual environment ===
+venv/
+.venv/
+.DS_Store
+.idea/
+
