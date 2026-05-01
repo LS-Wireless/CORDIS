@@ -59,6 +59,7 @@
     "mmwave_cluster_as_deg": 10.0
   },
   "sensing": {
+    "rx_strategy": "single_closest_centroid",
     "sigma_rcs_sq_db": -3.0,
     "swerling_model": 1,
     "los_model": "3gpp_umi",

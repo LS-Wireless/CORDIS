@@ -35,7 +35,7 @@ AP mode assignment
 ------------------
 Transmit APs (``At``) and receive APs (``Ar``) are selected by the
 :meth:`NetworkTopology.assign_sensing_rx` method, which picks the AP(s)
-closest to the target centroid as receive AP(s).  This heuristic minimizes
+closest to the target centroid as receive AP(s).  This heuristic minimises
 the sensing path loss on the receive side and matches the strategy used in
 the paper.  The CS can override this assignment at any time.
 """
@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple, Dict
 
 import numpy as np
 from numpy.typing import NDArray
@@ -192,13 +192,139 @@ class SensingTarget:
 
 
 # =============================================================================
+# SensingAssociation
+# =============================================================================
+
+@dataclass
+class SensingAssociation:
+    """
+    Explicit per-target AP association for multi-static sensing.
+
+    Records which transmit APs illuminate each target and which receive
+    APs collect echoes from each target.  This is the primary object
+    consumed by the sensing metrics (SCNR) and the CORDIS algorithms.
+
+    Unlike the coarse ``is_transmit`` / ``is_receive`` flags on
+    :class:`AccessPoint` (which only partition APs into global Tx/Rx
+    sets), ``SensingAssociation`` carries the full bipartite assignment
+    needed for multi-target scenarios where different targets may be
+    served by different AP subsets.
+
+    Attributes
+    ----------
+    tx_aps_per_target : dict[tg_idx, list[ap_idx]]
+        Transmit APs assigned to illuminate each target.
+        ``T_{a_t}`` in the paper notation.
+    rx_aps_per_target : dict[tg_idx, list[ap_idx]]
+        Receive APs assigned to collect echoes from each target.
+        ``T_{a_r}`` in the paper notation.
+    strategy : str
+        Strategy name that produced this association (for logging /
+        result tagging).
+
+    Notes
+    -----
+    The half-duplex constraint  At ∩ Ar = ∅  is enforced at the AP
+    level by the strategy that creates this object.  Validation is
+    available via :meth:`validate`.
+    """
+
+    tx_aps_per_target: Dict[int, List[int]]   # tg_idx -> [ap_idx, ...]
+    rx_aps_per_target: Dict[int, List[int]]   # tg_idx -> [ap_idx, ...]
+    strategy: str = "unknown"
+
+    # ── Derived sets ──────────────────────────────────────────────────────
+
+    @property
+    def all_tx_ap_indices(self) -> List[int]:
+        """Sorted list of all AP indices that appear as transmitters."""
+        idxs = set()
+        for lst in self.tx_aps_per_target.values():
+            idxs.update(lst)
+        return sorted(idxs)
+
+    @property
+    def all_rx_ap_indices(self) -> List[int]:
+        """Sorted list of all AP indices that appear as receivers."""
+        idxs = set()
+        for lst in self.rx_aps_per_target.values():
+            idxs.update(lst)
+        return sorted(idxs)
+
+    def tx_aps_for(self, tg_idx: int) -> List[int]:
+        """Return transmit AP indices for target ``tg_idx``."""
+        return self.tx_aps_per_target.get(tg_idx, [])
+
+    def rx_aps_for(self, tg_idx: int) -> List[int]:
+        """Return receive AP indices for target ``tg_idx``."""
+        return self.rx_aps_per_target.get(tg_idx, [])
+
+    def bistatic_pairs(self, tg_idx: int) -> List[Tuple[int, int]]:
+        """
+        Return all (tx_ap_idx, rx_ap_idx) pairs for target ``tg_idx``.
+        These are the bistatic links used in the SCNR computation.
+        """
+        return [
+            (at, ar)
+            for at in self.tx_aps_for(tg_idx)
+            for ar in self.rx_aps_for(tg_idx)
+        ]
+
+    def validate(self, topo: "NetworkTopology") -> None:
+        """
+        Check that the association is consistent with the topology.
+
+        Raises
+        ------
+        ValueError
+            If any assigned AP index does not exist, if the half-duplex
+            constraint is violated for any target, or if a target has no
+            assigned TX or RX AP.
+        """
+        all_ap_idxs = {ap.idx for ap in topo.aps}
+        for tg_idx in range(topo.n_targets):
+            tx_set = set(self.tx_aps_for(tg_idx))
+            rx_set = set(self.rx_aps_for(tg_idx))
+
+            bad_tx = tx_set - all_ap_idxs
+            if bad_tx:
+                raise ValueError(
+                    f"Target {tg_idx}: TX AP indices {bad_tx} not in topology."
+                )
+            bad_rx = rx_set - all_ap_idxs
+            if bad_rx:
+                raise ValueError(
+                    f"Target {tg_idx}: RX AP indices {bad_rx} not in topology."
+                )
+            overlap = tx_set & rx_set
+            if overlap:
+                raise ValueError(
+                    f"Target {tg_idx}: half-duplex violated — APs {overlap} "
+                    f"appear as both TX and RX."
+                )
+            if not tx_set:
+                raise ValueError(f"Target {tg_idx} has no assigned TX AP.")
+            if not rx_set:
+                raise ValueError(f"Target {tg_idx} has no assigned RX AP.")
+
+    def summary(self) -> str:
+        """Return a compact human-readable summary."""
+        lines = [f"SensingAssociation  [strategy={self.strategy}]"]
+        for tg_idx in sorted(self.tx_aps_per_target):
+            tx = self.tx_aps_for(tg_idx)
+            rx = self.rx_aps_for(tg_idx)
+            lines.append(f"  Target {tg_idx}: TX={tx}  RX={rx}")
+        return "\n".join(lines)
+
+
+# =============================================================================
 # NetworkTopology
 # =============================================================================
 
 @dataclass
 class NetworkTopology:
     """
-    Complete description of a single network realization.
+    Complete description of a single network realisation.
 
     This is the primary output of the topology generator and the primary
     input to every downstream module.
@@ -314,11 +440,11 @@ class NetworkTopology:
             Number of receive APs.
         strategy : str
             ``"closest_to_target_centroid"`` : pick the AP(s) whose 2-D
-            position is closest to the centroid of all targets.  Minimizes
+            position is closest to the centroid of all targets.  Minimises
             the sensing receive path loss.
 
             ``"farthest_from_ap_centroid"`` : pick the AP(s) farthest from
-            the centroid of all APs, maximizing the geometric aperture of
+            the centroid of all APs, maximising the geometric aperture of
             the multi-static receiver array.
 
             ``"fixed"`` : do not change existing flags (useful when the
@@ -421,7 +547,7 @@ def _uniform_annulus(
 
     Sampling is performed in polar coordinates with the correct Jacobian
     (r drawn from the CDF of the uniform-area distribution) to avoid the
-    central clustering artifact that arises from naive uniform-angle +
+    central clustering artefact that arises from naive uniform-angle +
     uniform-radius sampling.
 
     Parameters
@@ -519,7 +645,7 @@ def generate_topology(
     rx_strategy: str = "closest_to_target_centroid",
 ) -> NetworkTopology:
     """
-    Generate a single network topology realization from a CORDIS config.
+    Generate a single network topology realisation from a CORDIS config.
 
     Parameters
     ----------
@@ -625,10 +751,10 @@ def generate_topology_batch(
     rx_strategy: str = "closest_to_target_centroid",
 ) -> List[NetworkTopology]:
     """
-    Generate multiple independent topology realizations.
+    Generate multiple independent topology realisations.
 
     Each trial uses a child RNG spawned from ``rng`` so that the
-    realizations are statistically independent and the calling seed
+    realisations are statistically independent and the calling seed
     fully determines the batch.
 
     Parameters

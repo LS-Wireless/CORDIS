@@ -188,6 +188,15 @@ class SensingConfig:
     sigma_rcs_sq_db: float = -3.0   # σ_RCS^2 in dB (RCS power variance)
     swerling_model: int = 1         # 0 = deterministic RCS, 1 = Swerling-I
 
+    # ── Receive AP assignment strategy ────────────────────────────────────
+    rx_strategy: str = "single_closest_centroid"
+    # Options:
+    #   "single_closest_centroid"  – one Rx AP, closest to target centroid
+    #   "single_farthest_centroid" – one Rx AP, farthest from AP centroid
+    #   "per_target_closest"       – one dedicated Rx AP per target
+    #   "assent_file"              – load pre-computed ASSENT decision
+    #   "assent_live"              – call ASSENT model at runtime
+
     # ── Stochastic LoS availability (binary s_t) ─────────────────────────
     los_model: str = "3gpp_umi"     # "3gpp_umi" | "always" | "deterministic"
     los_probability_override: Optional[float] = None  # Fixed P_LoS if not None
@@ -875,6 +884,11 @@ PARAM_REGISTRY: Dict[str, Dict[str, str]] = {
     },
 
     # ── SensingConfig ─────────────────────────────────────────────────────
+    "sensing.rx_strategy": {
+        "help":  "Receive AP selection strategy; determines which APs collect target echoes",
+        "unit":  "-",
+        "range": "{single_closest_centroid|single_farthest_centroid|per_target_closest|assent_file|assent_live}",
+    },
     "sensing.sigma_rcs_sq_db": {
         "help":  "RCS power variance sigma_RCS^2 = E[|zeta_t|^2]; Swerling-I model",
         "unit":  "dB",
