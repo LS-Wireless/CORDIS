@@ -99,8 +99,8 @@ def parse_args():
         help="Save all figures to disk (default: display interactively only)",
     )
     output.add_argument(
-        "--out-dir", default="results/figures", metavar="PATH",
-        help="Directory for saved figures (default: results/figures)",
+        "--out-dir", default="eval/figures/topology", metavar="PATH",
+        help="Directory for saved figures (default: eval/figures/topology)",
     )
     output.add_argument(
         "--fmt", default="png", choices=["png", "pdf", "svg"],

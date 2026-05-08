@@ -136,6 +136,11 @@ results/logs/
 # Keep the .gitkeep placeholder so the results/ dir exists after clone
 !results/.gitkeep
 
+# Evaluation / sanity-check outputs (reproducible from seeds)
+eval/figures/
+eval/logs/
+eval/datasets/
+
 
 # =============================================================================
 # 6. CORDIS config files — what to keep vs. ignore
@@ -223,6 +228,9 @@ profiling/
 # Temporary Python scripts used for one-off debugging
 scratch_*.py
 tmp_*.py
+tmp_*.ipynb
+tmp_*.json
+tmp_*.txt
 
 # Large data files that should live in a data store, not git
 *.hdf5

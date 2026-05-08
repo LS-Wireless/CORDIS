@@ -35,7 +35,7 @@ AP mode assignment
 ------------------
 Transmit APs (``At``) and receive APs (``Ar``) are selected by the
 :meth:`NetworkTopology.assign_sensing_rx` method, which picks the AP(s)
-closest to the target centroid as receive AP(s).  This heuristic minimises
+closest to the target centroid as receive AP(s).  This heuristic minimizes
 the sensing path loss on the receive side and matches the strategy used in
 the paper.  The CS can override this assignment at any time.
 """
@@ -324,7 +324,7 @@ class SensingAssociation:
 @dataclass
 class NetworkTopology:
     """
-    Complete description of a single network realisation.
+    Complete description of a single network realization.
 
     This is the primary output of the topology generator and the primary
     input to every downstream module.
@@ -440,11 +440,11 @@ class NetworkTopology:
             Number of receive APs.
         strategy : str
             ``"closest_to_target_centroid"`` : pick the AP(s) whose 2-D
-            position is closest to the centroid of all targets.  Minimises
+            position is closest to the centroid of all targets.  Minimizes
             the sensing receive path loss.
 
             ``"farthest_from_ap_centroid"`` : pick the AP(s) farthest from
-            the centroid of all APs, maximising the geometric aperture of
+            the centroid of all APs, maximizing the geometric aperture of
             the multi-static receiver array.
 
             ``"fixed"`` : do not change existing flags (useful when the
@@ -547,7 +547,7 @@ def _uniform_annulus(
 
     Sampling is performed in polar coordinates with the correct Jacobian
     (r drawn from the CDF of the uniform-area distribution) to avoid the
-    central clustering artefact that arises from naive uniform-angle +
+    central clustering artifact that arises from naive uniform-angle +
     uniform-radius sampling.
 
     Parameters
@@ -565,6 +565,9 @@ def _uniform_annulus(
     """
     if r_max <= r_min:
         raise ValueError(f"r_max ({r_max}) must be > r_min ({r_min}).")
+
+    if n == 0:
+        return np.zeros((0, 3), dtype=float)
 
     # r ~ Uniform on [r_min², r_max²] then take sqrt → uniform area density
     r_sq = rng.uniform(r_min**2, r_max**2, size=n)
@@ -645,7 +648,7 @@ def generate_topology(
     rx_strategy: str = "closest_to_target_centroid",
 ) -> NetworkTopology:
     """
-    Generate a single network topology realisation from a CORDIS config.
+    Generate a single network topology realization from a CORDIS config.
 
     Parameters
     ----------
@@ -751,10 +754,10 @@ def generate_topology_batch(
     rx_strategy: str = "closest_to_target_centroid",
 ) -> List[NetworkTopology]:
     """
-    Generate multiple independent topology realisations.
+    Generate multiple independent topology realizations.
 
     Each trial uses a child RNG spawned from ``rng`` so that the
-    realisations are statistically independent and the calling seed
+    realizations are statistically independent and the calling seed
     fully determines the batch.
 
     Parameters

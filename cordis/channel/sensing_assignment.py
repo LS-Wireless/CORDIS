@@ -115,6 +115,19 @@ def assign_sensing(
         strategy = getattr(cfg.sensing, "rx_strategy", "single_closest_centroid")
 
     strategy = strategy.lower().strip()
+
+    # ── No targets → all APs transmit, empty association ──────────────────
+    if topo.n_targets == 0:
+        logger.info("No targets — all APs set to transmit mode.")
+        for ap in topo.aps:
+            ap.is_transmit = True
+            ap.is_receive  = False
+        return SensingAssociation(
+            tx_aps_per_target={},
+            rx_aps_per_target={},
+            strategy="none (0 targets)",
+        )
+
     logger.info("Sensing assignment strategy: '%s'", strategy)
 
     if strategy == "single_closest_centroid":

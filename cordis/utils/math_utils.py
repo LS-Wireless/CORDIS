@@ -125,7 +125,7 @@ def uca_radius(wavelength: float, n_elements: int,
     n_elements : int
         Number of antenna elements M.
     spacing_factor : float
-        Normalised inter-element spacing d/λ.  Default ``0.5``.
+        Normalized inter-element spacing d/λ.  Default ``0.5``.
 
     Returns
     -------
@@ -174,7 +174,7 @@ def steering_ula(
     wavelength : float
         Carrier wavelength in metres (λ = c / f_c).
     spacing_factor : float
-        Normalised inter-element spacing d/λ.  Default ``0.5``.
+        Normalized inter-element spacing d/λ.  Default ``0.5``.
 
     Returns
     -------
@@ -429,19 +429,21 @@ def null_space_projection_reg(
     reg: float = 1e-3,
 ) -> NDArray[np.complex128]:
     """
-    **Regularized** null-space projection used in the NS-C beamformer
-    (CORDIS paper, eq. 12):
+    Regularized null-space projection for the signal model  y = H_eff x
+    where  H_eff = H.conj()  (because  y_u = h_u^H x  with h_u stored as
+    rows of H).
 
-        P_perp ≈ I_M − H^H (H H^H + ε I)^{-1} H
+    The exact null-space projector of H_eff = H.conj() is:
+        P_perp = I_M − H.T (H.conj() H.T + ε I)^{-1} H.conj()
 
-    This is the formula used at each AP in practice.  It is NOT an exact
-    projector (P^2 ≠ P in general) but avoids an explicit SVD, handles
-    rank-deficient channels gracefully through the regularization, and
-    converges to the exact null-space projector as ε → 0.
+    A beamformer w = P_perp a satisfies  H.conj() w ≈ 0,
+    meaning the sensing beam causes no inter-stream interference to the
+    communication users.
 
     Parameters
     ----------
     H : np.ndarray, shape (N_ue, M)
+        Estimated channel matrix (rows = channel vectors h_u, NOT h_u^*).
     reg : float
         Regularization coefficient ε (default 1e-3).
 
@@ -450,10 +452,10 @@ def null_space_projection_reg(
     np.ndarray, shape (M, M), dtype complex128
     """
     N_ue, M = H.shape
-    # H H^H + ε I :  (N_ue, N_ue)
-    HHh = H @ H.conj().T + reg * np.eye(N_ue, dtype=complex)
-    # H^H (H H^H + ε I)^{-1} H : (M, M)
-    P_approx = H.conj().T @ np.linalg.solve(HHh, H)
+    # User-domain Gram: H.conj() H.T  (K × K)
+    gram_uu = H.conj() @ H.T + reg * np.eye(N_ue, dtype=complex)
+    # P_perp = I - H.T (gram_uu)^{-1} H.conj()   (M × M)
+    P_approx = H.T @ np.linalg.solve(gram_uu, H.conj())
     return (np.eye(M, dtype=complex) - P_approx).astype(np.complex128)
 
 

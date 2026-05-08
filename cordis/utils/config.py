@@ -131,10 +131,28 @@ class ChannelConfig:
     tau_f: int = 200                # Frame size τ_f [samples]
     tau_p: int = 10                 # Pilot length τ_p (≥ N_ue for no contamination)
     tau_d: int = 100                # Downlink ISAC symbols τ_d
-    # τ_u = τ_f - τ_p - τ_d (uplink payload, not optimised here)
+    # τ_u = τ_f - τ_p - τ_d (uplink payload, not optimized here)
 
     # ── Pilot power ───────────────────────────────────────────────────────
-    pilot_power_db: float = 20.0    # Pilot transmit power P_p [dB, relative to σ²_n]
+    # IMPORTANT — scaling: pilot_power_db = 10 log10(P_p / σ_n²)
+    # where P_p is the uplink pilot transmit power in watts and σ_n² is the
+    # absolute thermal noise power (computed from bandwidth and noise figure).
+    #
+    # The RECEIVED pilot SNR at the AP — which actually drives estimation
+    # quality — is:
+    #   SNR_rx_{au} = (P_p / σ_n²) × τ_p × β_{au}
+    #
+    # With 3GPP UMi path loss, β_{au} << 1, so pilot_power_db must be set
+    # high enough to compensate:
+    #
+    #   ap_radius 50 m  → β ≈ 1e-8  → need pilot_power_db ≥ 80 dB
+    #   ap_radius 200 m → β ≈ 3e-9  → need pilot_power_db ≥ 95 dB
+    #   ap_radius 650 m → β ≈ 7e-11 → need pilot_power_db ≥ 110 dB
+    #
+    # A value of 120 dB corresponds to P_p ≈ 200 mW (23 dBm) — physically
+    # realistic for a UE uplink pilot.  Values of 10–30 dB are only
+    # meaningful for toy (no-path-loss) channel models.
+    pilot_power_db: float = 120.0   # P_p / σ_n²  [dB]
 
     # ── Shadow fading ─────────────────────────────────────────────────────
     shadow_fading_los_std_db: float = 4.0    # σ_SF LoS [dB]
@@ -155,11 +173,11 @@ class ChannelConfig:
 
     # ── Inter-user spatial correlation (shared scattering subspace B_a) ──
     # Captured by B_a ∈ C^{Mt × r} with r ≪ Mt (eq. comm-channel-covariance)
-    shared_scatter_rank: int = 0    # r = 0 disables inter-user correlation
+    shared_scatter_rank: int = 0        # r = 0 disables inter-user correlation
     shared_scatter_power: float = 0.1  # Fraction of NLoS power in shared subspace
 
     # ── Estimation method ─────────────────────────────────────────────────
-    estimation_method: str = "MMSE" # "MMSE" | "LS" | "perfect"
+    estimation_method: str = "MMSE"     # "MMSE" | "LS" | "perfect"
 
     # ── mmWave extensions (active when carrier_freq_ghz > 6) ─────────────
     mmwave_n_clusters: int = 2
@@ -210,15 +228,15 @@ class SensingConfig:
     n_snapshots: int = 20           # T = number of slow-time sensing symbols
 
     # ── Clutter model (eq. clutter-channel) ──────────────────────────────
-    sigma_clt: float = 0.1          # Clutter channel gain σ_clt
+    sigma_clt: float = 0.1              # Clutter channel gain σ_clt
     # σ_clt^2 = clutter-to-noise ratio × σ_n^2 / (M_r M_t)  (set via clutter_cnr_db)
-    clutter_cnr_db: float = -10.0   # Clutter-to-noise ratio [dB]
+    clutter_cnr_db: float = -10.0       # Clutter-to-noise ratio [dB]
     # Temporal correlation of clutter (ρ_clt(Δτ)):
-    rho_clt_model: str = "constant" # "constant" (ρ=1) | "jakes" | "gaussian"
-    rho_clt_bandwidth: float = 0.1  # Normalised clutter Doppler bandwidth
+    rho_clt_model: str = "constant"     # "constant" (ρ=1) | "jakes" | "gaussian"
+    rho_clt_bandwidth: float = 0.1      # Normalized clutter Doppler bandwidth
 
     # ── Spatial correlation at clutter direction ──────────────────────────
-    clutter_as_deg: float = 15.0    # Angular spread of clutter returns [°]
+    clutter_as_deg: float = 15.0        # Angular spread of clutter returns [°]
 
 
 @dataclass
@@ -798,9 +816,15 @@ PARAM_REGISTRY: Dict[str, Dict[str, str]] = {
         "range": ">= 1",
     },
     "channel.pilot_power_db": {
-        "help":  "Uplink pilot transmit power P_p relative to noise variance sigma_n^2",
+        "help":  (
+            "Uplink pilot transmit SNR: 10 log10(P_p / sigma_n^2). "
+            "The RECEIVED pilot SNR at the AP is SNR_rx = (P_p/sigma_n^2) x tau_p x beta_{au}. "
+            "With 3GPP UMi path loss, beta << 1, so this must be set much higher than the "
+            "data SNR to compensate. Rule of thumb: pilot_power_db = snr_db + |PL_dB|. "
+            "120 dB corresponds to P_p ~ 200 mW (23 dBm), which is physically realistic."
+        ),
         "unit":  "dB",
-        "range": "any real (typical: 10 to 30)",
+        "range": "any real; 80-130 dB for 3GPP UMi at 50-650 m; 10-30 dB only for no-path-loss toy models",
     },
     "channel.shadow_fading_los_std_db": {
         "help":  "Shadow fading standard deviation sigma_SF for LoS links (3GPP UMi: 4 dB)",

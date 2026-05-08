@@ -312,7 +312,7 @@ def compute_channel_statistics(
     """
     Pre-compute second-order channel statistics for all transmit AP-UE pairs.
 
-    This function is called once per topology realisation.  The outputs
+    This function is called once per topology realization.  The outputs
     (R_{au}, C_{au}, etc.) are passed to the channel estimator and
     the beamforming algorithms.
 
@@ -438,7 +438,7 @@ def compute_channel_statistics(
 @dataclass
 class ChannelRealization:
     """
-    One coherence-block realisation of all AP-UE channel vectors.
+    One coherence-block realization of all AP-UE channel vectors.
 
     Attributes
     ----------
@@ -448,7 +448,7 @@ class ChannelRealization:
         Channel matrix H_{a} = [h_{a1}; …; h_{a,N_ue}] at each TX AP.
     stats : ChannelStatistics
         Reference to the second-order statistics used to generate this
-        realisation (needed by the estimator).
+        realization (needed by the estimator).
     """
 
     h:     Dict[Tuple[int, int], NDArray[np.complex128]]

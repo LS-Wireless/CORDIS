@@ -477,3 +477,104 @@ def _perfect_csi_result(
         R_tilde_H=R_tilde_H_dict, nmse=nmse_dict,
     )
 
+# =============================================================================
+# Pilot diagnostics
+# =============================================================================
+
+def compute_pilot_diagnostics(
+    topo,
+    cfg,
+    lsf,
+) -> dict:
+    """
+    Compute the effective received pilot SNR and predicted NMSE for every
+    transmit AP-UE link, without running the full estimation.
+
+    This is the single most important sanity-check tool when setting up a
+    new scenario: if ``snr_rx_db`` is below ~0 dB for any link, expect
+    NMSE ≈ 1 and essentially random channel estimates.
+
+    The effective received pilot SNR is:
+
+        SNR_rx_{au} = (P_p / σ_n²) × τ_p × β_{au}
+
+    and the predicted NMSE (scalar-channel approximation) is:
+
+        NMSE ≈ 1 / (1 + SNR_rx)
+
+    Parameters
+    ----------
+    topo : NetworkTopology
+    cfg  : CORDISConfig
+    lsf  : LargeScaleFading
+
+    Returns
+    -------
+    dict with keys:
+        "snr_rx_db"       : np.ndarray (N_tx, N_ue)  — received pilot SNR per link [dB]
+        "nmse_predicted"  : np.ndarray (N_tx, N_ue)  — predicted NMSE per link
+        "pilot_power_db"  : float      — P_p/σ_n² from config
+        "sigma_n_sq"      : float      — absolute noise power [W]
+        "pilot_power_lin" : float      — P_p in watts
+        "tau_p"           : int
+        "summary"         : str        — human-readable summary
+    """
+    from cordis.channel.pathloss import noise_power_watts
+
+    ch    = cfg.channel
+    frq   = cfg.frequency
+    tau_p = ch.tau_p
+
+    sigma_n_sq      = noise_power_watts(frq.bandwidth_hz, ch.noise_figure_db,
+                                        ch.noise_temp_k)
+    pilot_power_lin = (10.0 ** (ch.pilot_power_db / 10.0)) * sigma_n_sq
+
+    n_tx = topo.n_tx
+    n_ue = topo.n_ue
+
+    snr_rx     = np.zeros((n_tx, n_ue))
+    nmse_pred  = np.zeros((n_tx, n_ue))
+
+    for row, ap in enumerate(topo.tx_aps):
+        for col, ue in enumerate(topo.ues):
+            beta = lsf.beta_lin[ap.idx, ue.idx]
+            snr  = pilot_power_lin * tau_p * beta / sigma_n_sq
+            snr_rx[row, col]    = snr
+            nmse_pred[row, col] = 1.0 / (1.0 + snr)
+
+    snr_rx_db = 10.0 * np.log10(np.maximum(snr_rx, 1e-30))
+
+    # Build a human-readable summary
+    lines = [
+        "=== Pilot Diagnostics ===",
+        f"  pilot_power_db  = {ch.pilot_power_db:.1f} dB  (P_p/σ_n²)",
+        f"  sigma_n_sq      = {sigma_n_sq:.3e} W",
+        f"  pilot_power_lin = {pilot_power_lin:.3e} W  "
+        f"({10*np.log10(pilot_power_lin*1e3):.1f} dBm)",
+        f"  tau_p           = {tau_p}",
+        f"  SNR_rx range    = [{snr_rx_db.min():.1f}, {snr_rx_db.max():.1f}] dB",
+        f"  NMSE predicted  = [{nmse_pred.min():.4f}, {nmse_pred.max():.4f}]",
+    ]
+
+    # Warn if estimation will be poor
+    n_poor = int((nmse_pred > 0.5).sum())
+    n_total = n_tx * n_ue
+    if n_poor > 0:
+        lines.append(
+            f"  ⚠ WARNING: {n_poor}/{n_total} links have NMSE > 0.5 "
+            f"(SNR_rx < 1 dB).  Increase pilot_power_db by at least "
+            f"{max(0, -snr_rx_db.min()):.0f} dB."
+        )
+    else:
+        lines.append(f"  ✓ All {n_total} links have SNR_rx > 0 dB.")
+
+    return {
+        "snr_rx_db":       snr_rx_db,
+        "nmse_predicted":  nmse_pred,
+        "pilot_power_db":  ch.pilot_power_db,
+        "sigma_n_sq":      sigma_n_sq,
+        "pilot_power_lin": pilot_power_lin,
+        "tau_p":           tau_p,
+        "summary":         "\n".join(lines),
+    }
+
