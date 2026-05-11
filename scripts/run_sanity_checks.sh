@@ -21,7 +21,7 @@ cd "$SCRIPT_DIR/.." || { echo "ERROR: could not find repo root"; exit 1; }
 
 # Number of Monte Carlo trials per sweep point.
 # Quick check: 5–10   |   Validation: 50–100   |   Publication: 200–500
-N_TRIALS=100
+N_TRIALS=2
 
 # Scenarios to run (space-separated subset of: 1 2 3)
 #   1 = SINR vs SNR        (all-LoS, no targets)

@@ -194,8 +194,8 @@ def _base_cell() -> CORDISConfig:
     cfg.topology.ue_max_radius_m = 60.0
     cfg.topology.n_ap            = 6
     cfg.topology.n_ue            = 8      # 6/8 loading → visible MUI
-    cfg.topology.n_ant           = 8
-    cfg.topology.n_rf_chains     = 8
+    cfg.topology.n_ant           = 10
+    cfg.topology.n_rf_chains     = 10
     cfg.topology.n_targets       = 0
     cfg.topology.n_sensing_rx    = 0
     cfg.channel.tau_p            = 10
