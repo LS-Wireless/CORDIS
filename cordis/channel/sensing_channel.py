@@ -251,7 +251,12 @@ def compute_sensing_statistics(
             key_t = (ap.idx, tg_idx)
 
             # LoS state for this AP-target pair
-            if lsf.los_state_tg is not None:
+            los_cfg = cfg.sensing.los_model.lower().strip()
+            if los_cfg == "always":
+                los = True
+            elif los_cfg == "never":
+                los = False
+            elif lsf.los_state_tg is not None:
                 los = bool(lsf.los_state_tg[ap.idx, tg_idx])
             else:
                 los = True
