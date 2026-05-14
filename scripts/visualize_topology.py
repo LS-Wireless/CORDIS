@@ -5,9 +5,14 @@ Standalone script to generate and optionally save all topology visualizations.
 
 Run from the project root:
     python scripts/visualize_topology.py
-    python scripts/visualize_topology.py --save --out-dir results/figures
+    python scripts/visualize_topology.py --save --out-dir figures/topology
     python scripts/visualize_topology.py --n-ap 8 --n-ue 6 --n-targets 3
     python scripts/visualize_topology.py --seed 99 --topology random --no-show
+
+Note: In Stage 8a the topology plot helpers were moved from
+``cordis.visualization.topology_viz`` to ``cordis.plotting.topology`` so
+all matplotlib output lives under one module.  Only the import paths
+changed; the public API is identical.
 """
 
 import argparse
@@ -22,7 +27,7 @@ from cordis.utils.config import load_config
 from cordis.utils.io_utils import make_rng
 from cordis.channel.topology import generate_topology
 from cordis.channel.pathloss import compute_large_scale_fading
-from cordis.visualization.topology_viz import (
+from cordis.plotting.topology import (
     plot_topology_2d,
     plot_topology_3d,
     plot_lsf_heatmap,
@@ -48,7 +53,7 @@ examples:
 
   # Random layout, more users, save PNG figures, no interactive window
   python scripts/visualize_topology.py --topology random --n-ap 8 --n-ue 10 \\
-      --n-targets 4 --seed 7 --save --out-dir results/figures --no-show
+      --n-targets 4 --seed 7 --save --out-dir figures/topology --no-show
 
   # Only the 2x2 summary dashboard, custom config
   python scripts/visualize_topology.py --summary-only --config configs/exp_scalability.json
@@ -99,12 +104,14 @@ def parse_args():
         help="Save all figures to disk (default: display interactively only)",
     )
     output.add_argument(
-        "--out-dir", default="eval/figures/topology", metavar="PATH",
-        help="Directory for saved figures (default: eval/figures/topology)",
+        "--out-dir", default="figures/topology", metavar="PATH",
+        help="Directory for saved figures (default: figures/topology, "
+             "matching the Stage 8a $CORDIS_FIGURES_DIR convention)",
     )
     output.add_argument(
         "--fmt", default="png", choices=["png", "pdf", "svg"],
-        help="File format for saved figures (default: png)",
+        help="File format for saved figures (default: png).  "
+             "Use 'pdf' to embed CORDIS provenance metadata.",
     )
     output.add_argument(
         "--dpi", type=int, default=150, metavar="INT",

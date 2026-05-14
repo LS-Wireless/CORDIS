@@ -144,6 +144,8 @@ eval/datasets/
 # Stage 8a
 results/
 figures/
+# Keep the .gitkeep placeholder so the figures/ dir exists after clone
+!figures/.gitkeep
 # figures_examples/ stays committed; do NOT ignore
 
 

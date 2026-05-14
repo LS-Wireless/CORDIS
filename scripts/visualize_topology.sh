@@ -46,8 +46,8 @@ N_TARGETS=0                   # Number of targets     (0 = use config)
 # Save figures to disk (true/false)
 SAVE=true
 
-# Output directory for saved figures
-OUT_DIR="eval/figures/topology"
+# Output directory for saved figures (default: "figures/topology")
+OUT_DIR="figures/topology"
 
 # File format: png | pdf | svg
 FMT="png"
