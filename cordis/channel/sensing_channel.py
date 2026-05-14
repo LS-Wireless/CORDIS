@@ -211,37 +211,68 @@ def compute_sensing_statistics(
     C_rx_dict:          Dict[int, NDArray]                = {}
     los_state_tg_dict:  Dict[Tuple[int, int], bool]      = {}
 
-    # ── Clutter covariances at TX and RX APs ────────────────────────────────
-    for ap in topo.tx_aps:
-        # Clutter direction: use the centroid of all targets as a proxy
+    # ── Clutter direction helper (strategy-aware) ────────────────────────
+    def _clutter_az_el(ap) -> Tuple[float, float]:
+        """
+        Return (azimuth_deg, elevation_deg) for the clutter PAS centre at
+        ``ap`` based on ``cfg.sensing.clutter_center_strategy``.
+
+        - target_centroid: ap-to-target-centroid direction (legacy)
+        - offset:          target_centroid azimuth + clutter_offset_az_deg
+        - uniform:         force PAS to span all azimuths (caller widens AS)
+        - random:          uniform azimuth from rng, elevation = horizon
+        """
+        strat = getattr(s_cfg, "clutter_center_strategy", "target_centroid")
         if topo.n_targets > 0:
             tg_centroid = topo.target_positions.mean(axis=0)
             diff = tg_centroid - ap.pos
-            az = float(np.arctan2(diff[1], diff[0]))
-            el = float(np.arccos(np.clip(diff[2] / (np.linalg.norm(diff) + 1e-9), -1, 1)))
+            az_t = float(np.arctan2(diff[1], diff[0]))
+            el_t = float(np.arccos(
+                np.clip(diff[2] / (np.linalg.norm(diff) + 1e-9), -1, 1)
+            ))
         else:
-            az, el = 0.0, np.pi / 2
+            az_t, el_t = 0.0, np.pi / 2
 
+        if strat == "target_centroid":
+            return float(np.rad2deg(az_t)), float(np.rad2deg(el_t))
+        if strat == "offset":
+            offset_rad = np.deg2rad(getattr(s_cfg, "clutter_offset_az_deg", 60.0))
+            return float(np.rad2deg(az_t + offset_rad)), float(np.rad2deg(el_t))
+        if strat == "uniform":
+            # Caller will use a wide AS; centre azimuth is irrelevant but
+            # we pick zero so the PAS is symmetric about boresight.
+            return 0.0, 90.0
+        if strat == "random":
+            return float(rng.uniform(-180.0, 180.0)), float(np.rad2deg(el_t))
+        raise ValueError(
+            f"Unknown clutter_center_strategy '{strat}'. Choose from: "
+            f"target_centroid, offset, uniform, random."
+        )
+
+    # For "uniform" we widen the effective angular spread; otherwise use
+    # the configured clutter_as_deg.
+    _as_effective = (
+        180.0 if getattr(s_cfg, "clutter_center_strategy", "target_centroid")
+                 == "uniform"
+        else s_cfg.clutter_as_deg
+    )
+
+    # ── Clutter covariances at TX and RX APs ────────────────────────────────
+    for ap in topo.tx_aps:
+        az_deg, el_deg = _clutter_az_el(ap)
         C_tx_dict[ap.idx] = compute_clutter_spatial_correlation(
             array_t, n_ant_t,
-            float(np.rad2deg(az)), float(np.rad2deg(el)),
-            s_cfg.clutter_as_deg, lam, spacing,
+            az_deg, el_deg,
+            _as_effective, lam, spacing,
             n_samples=500, rng=rng,
         )
 
     for ap in topo.rx_aps:
-        if topo.n_targets > 0:
-            tg_centroid = topo.target_positions.mean(axis=0)
-            diff = tg_centroid - ap.pos
-            az = float(np.arctan2(diff[1], diff[0]))
-            el = float(np.arccos(np.clip(diff[2] / (np.linalg.norm(diff) + 1e-9), -1, 1)))
-        else:
-            az, el = 0.0, np.pi / 2
-
+        az_deg, el_deg = _clutter_az_el(ap)
         C_rx_dict[ap.idx] = compute_clutter_spatial_correlation(
             array_t, n_ant_r,
-            float(np.rad2deg(az)), float(np.rad2deg(el)),
-            s_cfg.clutter_as_deg, lam, spacing,
+            az_deg, el_deg,
+            _as_effective, lam, spacing,
             n_samples=500, rng=rng,
         )
 

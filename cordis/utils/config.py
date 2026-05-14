@@ -173,11 +173,11 @@ class ChannelConfig:
 
     # ── Inter-user spatial correlation (shared scattering subspace B_a) ──
     # Captured by B_a ∈ C^{Mt × r} with r ≪ Mt (eq. comm-channel-covariance)
-    shared_scatter_rank: int = 0        # r = 0 disables inter-user correlation
+    shared_scatter_rank: int = 0    # r = 0 disables inter-user correlation
     shared_scatter_power: float = 0.1  # Fraction of NLoS power in shared subspace
 
     # ── Estimation method ─────────────────────────────────────────────────
-    estimation_method: str = "MMSE"     # "MMSE" | "LS" | "perfect"
+    estimation_method: str = "MMSE" # "MMSE" | "LS" | "perfect"
 
     # ── mmWave extensions (active when carrier_freq_ghz > 6) ─────────────
     mmwave_n_clusters: int = 2
@@ -228,15 +228,35 @@ class SensingConfig:
     n_snapshots: int = 20           # T = number of slow-time sensing symbols
 
     # ── Clutter model (eq. clutter-channel) ──────────────────────────────
-    sigma_clt: float = 0.1              # Clutter channel gain σ_clt
+    sigma_clt: float = 0.1          # Clutter channel gain σ_clt
     # σ_clt^2 = clutter-to-noise ratio × σ_n^2 / (M_r M_t)  (set via clutter_cnr_db)
-    clutter_cnr_db: float = -10.0       # Clutter-to-noise ratio [dB]
+    clutter_cnr_db: float = -10.0   # Clutter-to-noise ratio [dB]
     # Temporal correlation of clutter (ρ_clt(Δτ)):
-    rho_clt_model: str = "constant"     # "constant" (ρ=1) | "jakes" | "gaussian"
-    rho_clt_bandwidth: float = 0.1      # Normalized clutter Doppler bandwidth
+    rho_clt_model: str = "constant" # "constant" (ρ=1) | "jakes" | "gaussian"
+    rho_clt_bandwidth: float = 0.1  # Normalized clutter Doppler bandwidth
 
     # ── Spatial correlation at clutter direction ──────────────────────────
-    clutter_as_deg: float = 15.0        # Angular spread of clutter returns [°]
+    clutter_as_deg: float = 15.0    # Angular spread of clutter returns [°]
+
+    # ── Clutter direction placement ───────────────────────────────────────
+    # "target_centroid": clutter PAS centred on AP-to-target-centroid
+    #     direction.  Clutter and target are spatially aligned, so the
+    #     clutter penalty term ‖C^{1/2} W‖² and the sensing gradient
+    #     |a_t^H W|² have negatively correlated gradients — high κ pushes
+    #     the beam away from the target, collapsing both SCNR and SINR
+    #     for any UE the target shadows.  Default for backward compat.
+    # "offset":  clutter PAS centred at  (target azimuth + clutter_offset_az_deg)
+    #     so it is decoupled from the target direction.  Use this when
+    #     you want κ to trade off clutter avoidance against sensing gain
+    #     without geometric coupling to comm coverage.
+    # "uniform": clutter PAS spans the full azimuth (clutter_as_deg
+    #     effectively → 180°), giving an isotropic C ≈ (P_clt/M)·I.
+    #     The clutter penalty becomes a global power regulariser; κ no
+    #     longer steers the beam.
+    # "random":  per-AP random azimuth drawn from U[-π, π] using the
+    #     supplied RNG.  Useful for Monte-Carlo over clutter geometries.
+    clutter_center_strategy: str = "target_centroid"
+    clutter_offset_az_deg:   float = 60.0       # used by "offset" strategy
 
 
 @dataclass

@@ -445,15 +445,25 @@ def _solve_central_socp(
     n_t:        int,
     xi_slack:   float,
     solver:     str,
+    nu_sinr_u:  float = 0.0,            # SOC-slack ALM multiplier
 ) -> Tuple[ConsensusVector, float, bool]:
     """
     Solve the per-user CPU SOCP P-Central (eq. admm-p-central) in
     SNR-normalised units (noise → 1), using the AMPLITUDE convention for
     z_u^err (see LocalContribution docstring for the rationale):
 
-        min  ‖sum_l_u + nu_u − z_u‖²  +  ξ ε_u
+        min  ‖sum_l_u + nu_u − z_u‖²
+             + ν^sinr_u · ε_u + (ξ/2) · ε_u²        ← Augmented Lagrangian
         s.t. ‖[z^MUI; z^S2CI; z^err; 1]‖_2  ≤  Re{z^CDS}/√γ_u  +  ε_u
              Im{z_u^CDS} = 0,   z_u^err ≥ 0,   ε_u ≥ 0
+
+    The Augmented Lagrangian on ε_u (Method of Multipliers, Bertsekas
+    §4.2.4) supersedes the pure linear penalty ξ·ε of the exterior
+    penalty method.  The multiplier ν^sinr_u is updated outside the
+    SOCP via  ν^sinr ← max(0, ν^sinr + ξ · ε*),  which accumulates the
+    constraint violation and drives ε → 0 at *fixed* ξ — unlike pure
+    penalty which would need ξ → ∞.  The quadratic ε² term is the
+    augmentation that gives linear convergence under regularity.
 
     The squaring inside ‖·‖² gives (z^err)² as the CSI-error contribution,
     consistent with z^err being an aggregate amplitude (≥ Σ_a ‖R̃^{1/2} W_a‖_F).
@@ -506,7 +516,13 @@ def _solve_central_socp(
     err_const = float(sum_l_u.err + nu_u.err)
     pen_err   = cp.square(err_const - z_err)
 
-    obj = pen_cds + pen_mui + pen_s2ci + pen_err + xi_slack * eps_u
+    # Augmented Lagrangian penalty on the SOC slack ε_u:
+    #     ν^sinr_u · ε_u  +  (ξ/2) · ε_u²
+    # Multiplier ν^sinr_u is accumulated by the outer loop after this
+    # solve; ξ stays bounded.  Both terms are convex in ε_u and accepted
+    # by CLARABEL/SCS without reformulation.
+    slack_pen = nu_sinr_u * eps_u + 0.5 * xi_slack * cp.square(eps_u)
+    obj = pen_cds + pen_mui + pen_s2ci + pen_err + slack_pen
     prob = cp.Problem(cp.Minimize(obj), constraints)
 
     try:
@@ -620,6 +636,7 @@ def solve_cordis_admm(
     rho_admm:   float = 1.0,
     kappa:      float = 0.0,
     xi_slack:   float = 1e4,
+    slack_tol:  float = 1e-3,
     n_snapshots: int  = 1,
     verbose:    bool  = False,
 ) -> ADMMResult:
@@ -643,13 +660,19 @@ def solve_cordis_admm(
         gain, so SCNR is only weakly affected by κ — this is geometric,
         not an implementation issue.
     xi_slack : *upper cap* on the SOC slack weight ξ in P-Central.  Inside
-        the loop ξ is adapted: it starts at 10 % of the cap and grows
-        multiplicatively (factor 1.5) on iterations where r_pri shrinks;
-        it shrinks again whenever r_pri grows (a signal that γ is
-        infeasible and the CPU is pushing z beyond achievable bounds).
-        This avoids the runaway-consensus failure that a large fixed ξ
-        causes at infeasible γ, while still tightening SOC enforcement
-        at feasible γ.
+        the loop ξ is adapted via the exterior penalty method
+        (Bertsekas, "Nonlinear Programming", §4.2.1): start at 10 % of
+        the cap and grow multiplicatively (factor 1.5) whenever the SOC
+        slack ``max_u ε_u`` exceeds ``slack_tol`` and is not shrinking
+        fast (``> 0.95 × prev``).  ξ relaxes by the same factor only
+        when slack is comfortably below tolerance.  This drives ε → 0
+        rather than letting the algorithm equilibrate at a sensing-
+        favoured operating point with SINR < γ.
+    slack_tol : SOC-slack tolerance for ξ adaptation, default 1e-3.
+        Slack is measured in normalised SNR-amplitude units (same as the
+        SOC RHS), so 1e-3 means "constraint satisfied within 0.001 SNR-
+        amplitude units".  Increase to relax SINR enforcement; decrease
+        to tighten it (at the cost of more iterations and lower SCNR).
     """
     if not _HAS_CVXPY:
         raise RuntimeError("CORDIS-ADMM requires CVXPY.")
@@ -752,11 +775,16 @@ def solve_cordis_admm(
     # At infeasible γ the algorithm doesn't converge: r_pri rises after
     # some early iters as the CPU pushes z toward an unreachable SOC and
     # ν compounds.  Without tracking, we'd return the *last* (drifted)
-    # iterate.  We instead save the iterate with the smallest r_pri seen
-    # so far (the closest to a feasible consensus) and fall back to it
-    # whenever the loop exits without converging.  At feasible γ the
-    # best iterate IS the converged one, so this is a no-regret fix.
-    best_r_pri = float("inf")
+    # iterate.  We save the iterate with the HIGHEST min-SINR seen so far
+    # (the closest to feasibility for the SINR cone), breaking ties by
+    # lower r_pri.  This proxies feasibility by the metric the user
+    # actually cares about (per-user SINR), avoiding the failure mode
+    # where a tight-consensus iterate (low r_pri) has drifted into
+    # low-SINR territory.  At feasible γ the best iterate IS the
+    # converged one, so this is a no-regret change.
+    best_min_sinr   = -float("inf")
+    best_r_pri      = float("inf")
+    best_slack_norm = float("inf")
     W_best     : Dict[int, NDArray[np.complex128]] = {
         a: W_cur[a].copy() for a in tx_idx
     }
@@ -765,18 +793,38 @@ def solve_cordis_admm(
     best_sinr  : Optional[NDArray[np.float64]] = None
     best_slack : Optional[NDArray[np.float64]] = None
 
-    # ── Adaptive SOC-slack weight ξ ──────────────────────────────────────
+    # ── Adaptive SOC-slack weight ξ — exterior penalty method ────────────
     # The user-supplied xi_slack is treated as the *cap*; we start at 10 %
-    # of the cap and grow ξ multiplicatively whenever the primal residual
-    # shrinks meaningfully (the algorithm is making progress, so we can
-    # afford to tighten SOC enforcement).  Whenever r_pri grows (γ likely
-    # infeasible — CPU pushes z beyond what APs can deliver), we shrink ξ
-    # so slack absorbs the infeasibility instead of inflating ν.
+    # of the cap and grow ξ multiplicatively whenever the SOC slack
+    # (max_u ε_u) persists above ``slack_tol``.  This is the standard
+    # exterior-penalty / monotone-penalty heuristic
+    # (Bertsekas, "Nonlinear Programming", §4.2.1): drive the penalty
+    # parameter up until the constraint is tight, then hold or relax.
+    #
+    # We deliberately track slack rather than r_pri here.  At high κ the
+    # APs reach internal consensus on a sensing-favoured local optimum
+    # (r_pri → 0) but with ε_u > 0 baked in — i.e. consensus achieved by
+    # mutual agreement to violate the SINR target.  Adapting ξ on r_pri
+    # would *relax* the penalty in exactly this regime; tracking slack
+    # makes the adaptation reflect the violation it's supposed to
+    # penalise.
     xi_cap   = max(xi_slack, 1.0)
     xi_floor = max(xi_cap / 100.0, 1.0)
     xi_cur   = max(xi_cap / 10.0, xi_floor)
     xi_grow  = 1.5
-    prev_r_pri = float("inf")
+    prev_slack_norm = float("inf")
+
+    # ── SOC-slack Augmented Lagrangian multipliers ν^sinr ────────────────
+    # Per-user multipliers for the SINR cone constraint, updated outside
+    # the central SOCP via  ν^sinr_u ← max(0, ν^sinr_u + ξ_cur · ε_u*).
+    # This is the Method of Multipliers (Hestenes-Powell; Bertsekas
+    # §4.2.4): the multiplier accumulates the running SOC slack so that
+    # ε_u → 0 holds at FIXED ξ — unlike the pure exterior-penalty method
+    # which would need ξ → ∞.  ν^sinr is capped at ``nu_sinr_max`` to
+    # prevent runaway when γ is truly infeasible (in which case Stage 6c's
+    # best-iterate fallback handles the exit).
+    nu_sinr      = np.zeros(n_ue, dtype=np.float64)
+    nu_sinr_max  = 1e8                                  # safety cap
 
     if verbose:
         print(f"  [ADMM] rho={rho_admm}, kappa={kappa}, xi∈[{xi_floor:.1e}, "
@@ -872,6 +920,7 @@ def solve_cordis_admm(
                 n_t=n_t,
                 xi_slack=xi_cur,
                 solver=cfg.algorithm.admm.solver,
+                nu_sinr_u=float(nu_sinr[u]),
             )
             z_new[u]   = z_u
             eps_new[u] = eps_u
@@ -947,34 +996,73 @@ def solve_cordis_admm(
         slack_hist.append(eps_new.copy())
         znorm_hist.append(z_norm_sum)
 
-        # ── Best-iterate snapshot ────────────────────────────────────────
-        # Save W when the primal residual is the smallest seen so far AND
-        # all inner solves succeeded.  Used as the fallback return if the
-        # loop exits without convergence.
-        if all_ok and r_pri < best_r_pri:
-            best_r_pri = r_pri
+        # ── Best-iterate snapshot (highest min-SINR seen) ────────────────
+        # Track the iterate that achieves the highest min-SINR — the
+        # metric the user actually cares about.  Ties broken by lower
+        # r_pri.  At feasible γ the converged iterate has min-SINR ≈ γ
+        # and is also the best by this rule, so this never regresses
+        # against the previous behaviour.  At infeasible γ, or when the
+        # algorithm hits ``n_admm_max`` before convergence, this returns
+        # the iterate that came closest to the SINR target rather than
+        # an iterate that drifted into deeper violation.
+        cand_min_sinr = float(sinr_vec.min()) if sinr_vec.size else 0.0
+        cand_slack    = float(np.max(eps_new)) if eps_new.size else 0.0
+        take = False
+        if all_ok:
+            if cand_min_sinr > best_min_sinr + 1e-12:
+                take = True                              # strictly higher min-SINR
+            elif (abs(cand_min_sinr - best_min_sinr) < 1e-12
+                  and r_pri < best_r_pri):
+                take = True                              # same min-SINR, tighter consensus
+        if take:
+            best_min_sinr   = cand_min_sinr
+            best_r_pri      = r_pri
+            best_slack_norm = cand_slack
             W_best     = {a: W_new[a].copy() for a in tx_idx}
             best_iter  = n_iter + 1
             best_sens  = sens_val
             best_sinr  = sinr_vec.copy()
             best_slack = eps_new.copy()
 
-        # ── Adaptive ξ update ────────────────────────────────────────────
-        # Track r_pri trend.  Shrinking r_pri = algorithm has progress to
-        # spend on tighter SOC → grow ξ.  Growing r_pri = γ likely
-        # infeasible, CPU pushing unreachable z → shrink ξ.
+        # ── Adaptive ξ — exterior penalty method, slack-driven ───────────
+        # Grow ξ when the max SOC slack max_u ε_u persists above
+        # ``slack_tol``; relax it only when the slack is comfortably
+        # below tolerance.  This drives ε → 0 rather than letting it
+        # equilibrate at a sensing-favoured operating point with
+        # SINR < γ.  Standard exterior penalty heuristic — see Bertsekas
+        # "Nonlinear Programming", §4.2.1.
+        slack_norm = float(np.max(eps_new)) if eps_new.size else 0.0
         if n_iter >= 1:
-            if r_pri < 0.95 * prev_r_pri:
-                xi_cur = min(xi_cur * xi_grow, xi_cap)
-            elif r_pri > 1.10 * prev_r_pri:
+            if slack_norm > slack_tol:
+                # Constraint still violated — penalise harder.
+                # Gate on "not shrinking fast" so we don't keep ramping
+                # if the algorithm is already making good progress.
+                if slack_norm > 0.95 * prev_slack_norm:
+                    xi_cur = min(xi_cur * xi_grow, xi_cap)
+                # else: violation is shrinking fast, hold ξ steady
+            elif slack_norm < 0.1 * slack_tol:
+                # Comfortably feasible — can relax ξ slightly
                 xi_cur = max(xi_cur / xi_grow, xi_floor)
-            # else: stable, hold ξ
-        prev_r_pri = r_pri
+        prev_slack_norm = slack_norm
+
+        # ── ALM multiplier update for SOC slack (Method of Multipliers) ─
+        # Bertsekas §4.2.4:  ν^sinr_u ← max(0, ν^sinr_u + ξ · ε_u*).
+        # When ε_u > 0 (SINR cone violated), the multiplier accumulates,
+        # adding a stronger linear pull toward feasibility next iter.
+        # When ε_u = 0 (constraint tight), it holds steady — i.e.
+        # remembers the optimal dual variable for the constraint.
+        # Capped to prevent runaway when γ is truly infeasible.
+        for u in range(n_ue):
+            nu_sinr[u] = min(
+                max(0.0, nu_sinr[u] + xi_cur * float(eps_new[u])),
+                nu_sinr_max,
+            )
 
         if verbose:
             print(f"  [ADMM {n_iter+1:2d}]  r_pri={r_pri:.3e}  r_dual={r_dual:.3e}  "
                   f"minSINR={lin2db(sinr_vec.min()):+.2f}dB  "
-                  f"maxSlack={eps_new.max():.2e}  ξ={xi_cur:.2e}")
+                  f"maxSlack={eps_new.max():.2e}  ξ={xi_cur:.2e}  "
+                  f"maxν^sinr={nu_sinr.max():.2e}")
 
         # ── Advance state ────────────────────────────────────────────────
         W_cur            = W_new
@@ -985,9 +1073,17 @@ def solve_cordis_admm(
         Sigma_tilde_cur  = Sigma_tilde_new
 
         # ── Convergence ──────────────────────────────────────────────────
+        # Original criterion: consensus tight (r_pri, r_dual) and all
+        # inner solves succeeded.  The ALM multipliers + adaptive ξ keep
+        # slack ε close to zero at the converged iterate; we don't add
+        # an explicit slack check here because that previously caused
+        # the algorithm to refuse to declare convergence on perfectly
+        # good iterates with tiny but non-zero slack, which then forced
+        # the fallback to drift through the full ``n_admm_max`` window.
         if r_pri < eps_pri and r_dual < eps_dual and all_ok:
             if verbose:
-                print(f"  [ADMM] converged at iter {n_iter+1}")
+                print(f"  [ADMM] converged at iter {n_iter+1} "
+                      f"(slack={slack_norm:.2e})")
             return ADMMResult(
                 W_tx=W_cur,
                 primal_res_history=prim_hist,

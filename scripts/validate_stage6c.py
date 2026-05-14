@@ -78,6 +78,8 @@ def _build_scenario(seed, n_ap, n_ue, n_ant, n_targets, gamma_db,
     cfg.algorithm.split.gamma_db = gamma_db
     cfg.algorithm.split.kappa    = 1.0
     cfg.algorithm.admm.kappa     = kappa
+    cfg.sensing.clutter_center_strategy = "offset"  # decouple clutter
+    cfg.sensing.clutter_offset_az_deg = 60.0
 
     rng  = make_rng(seed)
     topo = generate_topology(cfg, child_rng(rng))
@@ -320,7 +322,7 @@ def test_7_kappa_sweep():
     # with 15° spread), so the optimizer starts trading SINR for clutter
     # avoidance — useful operating range is [0, ~0.5].  See discussion in
     # the algorithm docstring.
-    kappas = [0.0, 0.1, 0.2, 0.3, 0.5]
+    kappas = [0.0, 0.1, 0.2, 0.3, 0.5, 0.6, 0.8, 1, 2, 3, 5]
     print(f"  {'κ':>8} {'iters':>6} {'minSINR':>9} {'SCNR':>9} "
           f"{'power_util':>11}")
     print(f"  {'─'*8} {'─'*6} {'─'*9} {'─'*9} {'─'*11}")

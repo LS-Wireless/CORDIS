@@ -48,6 +48,39 @@ except ImportError:
 
 
 # =============================================================================
+# Module constants
+# =============================================================================
+
+# Iteration cap for the inner CVXPY SOCP at each SCA step.
+#
+# Default solver caps are too tight for this problem size (CLARABEL ≈ 200,
+# SCS ≈ 2500): when the inner solve hits its limit, CVXPY returns
+# ``status="user_limit"``, the SCA outer loop falls back to the previous
+# iterate, and convergence stalls.  Empirically 10 000 is generous enough
+# for problems up to ~10 APs × 16 antennas × 8 streams without slowing
+# typical solves (CLARABEL terminates well before this cap when the
+# problem is well-conditioned).
+_CVXPY_INNER_MAX_ITER: int = 10_000
+
+
+def _cvxpy_solve_opts(solver: str) -> Dict[str, object]:
+    """
+    Return solver-specific keyword arguments for ``prob.solve``.
+
+    The iteration-cap keyword name differs between solvers
+    (``max_iter`` for CLARABEL, ``max_iters`` for SCS), so we route on
+    the solver name.  Unknown solvers receive only ``verbose=False`` —
+    safe defaults that CVXPY accepts universally.
+    """
+    opts: Dict[str, object] = {"verbose": False}
+    if solver == "CLARABEL":
+        opts["max_iter"] = _CVXPY_INNER_MAX_ITER
+    elif solver == "SCS":
+        opts["max_iters"] = _CVXPY_INNER_MAX_ITER
+    return opts
+
+
+# =============================================================================
 # Result container
 # =============================================================================
 
@@ -441,6 +474,28 @@ def _solve_inner_cvxpy(
 
     obj_scale = 1.0 / (2.0 * sqrt_pmax * g_ref + 1e-30)
 
+    # Auto-balanced κ per AP (mirrors joint_opt.py's Stage-6c logic).
+    #
+    # The raw clutter term  κ · Pmax · ‖C^{1/2} W̃‖²  scales with Pmax,
+    # whereas the bare sensing gradient term scales as √Pmax · |G·W̃|.
+    # At 90 dB SNR (Pmax ≫ 1) the raw clutter term dwarfs the sensing
+    # term for any sane κ, so SCA collapses W to "minimize clutter
+    # response" — which, in geometries where clutter PAS overlaps the
+    # target direction, also kills the target response.
+    #
+    # Following joint_opt.py: use the per-AP natural sensing magnitude
+    #     sensing_ref[a] = |2 Re tr(G^H W_prev)|
+    # as the κ multiplier, so user-facing κ = 1 means "clutter penalty
+    # ≈ sensing-signal magnitude" — strong but not overwhelming.
+    kappa_eff: Dict[int, float] = {}
+    for a in tx_ap_order:
+        G = G_sca.get(a)
+        if G is None:
+            kappa_eff[a] = 0.0
+        else:
+            sensing_ref_a = 2.0 * abs(float(np.real(np.trace(G.conj().T @ W_prev[a]))))
+            kappa_eff[a] = kappa * max(sensing_ref_a, 1e-30)
+
     obj_terms = []
     for a in tx_ap_order:
         G = G_sca.get(a)
@@ -451,11 +506,11 @@ def _solve_inner_cvxpy(
                 * cp.real(cp.trace(G.conj().T @ W_var[a]))
             )
         C = sensing_stats.C_tx.get(a)
-        if C is not None and kappa > 0:
+        if C is not None and kappa_eff[a] > 0:
             C_sqrt = _hermitian_sqrt(C)
-            # κ tr(W^H C W) = κ P_max ‖C^{1/2} W̃‖²_F
+            # κ_eff · ‖C^{1/2} W‖² = κ_eff · P_max · ‖C^{1/2} W̃‖²_F
             obj_terms.append(
-                -obj_scale * kappa * Pmax
+                -obj_scale * kappa_eff[a] * Pmax
                 * cp.square(cp.norm(C_sqrt @ W_var[a], "fro"))
             )
 
@@ -466,10 +521,10 @@ def _solve_inner_cvxpy(
 
     solver_used = solver
     try:
-        prob.solve(solver=solver, verbose=False)
+        prob.solve(solver=solver, **_cvxpy_solve_opts(solver))
     except Exception as e_primary:
         try:
-            prob.solve(solver="SCS", verbose=False)
+            prob.solve(solver="SCS", **_cvxpy_solve_opts("SCS"))
             solver_used = "SCS"
         except Exception as e_fallback:
             logger.error(
@@ -710,7 +765,7 @@ def run_centralized(
     **kwargs,
 ) -> Tuple[Dict[int, NDArray[np.complex128]], CentralizedResult]:
     """
-    Full centralised pipeline: warm-start → SCA solve → W_tx.
+    Full centralized pipeline: warm-start → SCA solve → W_tx.
 
     Returns
     -------
