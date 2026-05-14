@@ -141,6 +141,11 @@ eval/figures/
 eval/logs/
 eval/datasets/
 
+# Stage 8a
+results/
+figures/
+# figures_examples/ stays committed; do NOT ignore
+
 
 # =============================================================================
 # 6. CORDIS config files — what to keep vs. ignore
