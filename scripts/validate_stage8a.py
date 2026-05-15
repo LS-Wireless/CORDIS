@@ -95,6 +95,7 @@ from cordis.experiments import (          # noqa: E402
     experiment_dir,
     figure_dir,
     latest_result,
+    log_dir,
 )
 
 
@@ -435,21 +436,50 @@ def test_11_tables():
 
 
 def test_12_experiment_io():
-    """experiment_dir / latest_result / figure_dir round-trip."""
+    """experiment_dir / latest_result / figure_dir / log_dir round-trip,
+    including the auto-applied ``exp_`` prefix."""
     with tempfile.TemporaryDirectory() as td:
         os.environ["CORDIS_RESULTS_DIR"] = str(Path(td) / "results")
         os.environ["CORDIS_FIGURES_DIR"] = str(Path(td) / "figures")
         try:
+            # ── exp_ prefix is added automatically ────────────────────
             d1 = experiment_dir("validate_8a", timestamp="20260514_120000")
+            assert d1.exists()
+            assert "exp_validate_8a" in str(d1), \
+                f"expected 'exp_validate_8a' in path, got {d1}"
+            assert d1.parent.name == "exp_validate_8a", d1.parent
+
+            # ── Prefix is idempotent: 'exp_X' doesn't become 'exp_exp_X' ─
+            d_idem = experiment_dir("exp_already_prefixed",
+                                    timestamp="20260514_120100")
+            assert "exp_exp_" not in str(d_idem), \
+                f"double prefix detected in {d_idem}"
+            assert "exp_already_prefixed" in str(d_idem)
+
+            # ── 'latest' symlink points to the most recent timestamp ─
             d2 = experiment_dir("validate_8a", timestamp="20260514_130000")
-            assert d1.exists() and d2.exists()
-            # Latest should resolve to d2 (most recent call wins).
+            assert d2.exists()
             resolved = latest_result("validate_8a")
             assert resolved.name == "20260514_130000", resolved
-            # Figure dir
+
+            # ── figure_dir auto-prefixes too ──────────────────────────
             f = figure_dir("validate_8a")
-            assert f.exists() and "validate_8a" in str(f)
-            # Bad names
+            assert f.exists()
+            assert f.name == "exp_validate_8a", f
+            # figure_dir is also idempotent on already-prefixed names
+            f2 = figure_dir("exp_validate_8a")
+            assert f2 == f, f"{f2} != {f}"
+
+            # ── log_dir creates <exp>/logs/ for per-run logs ──────────
+            logs = log_dir(d1)
+            assert logs.exists() and logs.is_dir()
+            assert logs.name == "logs"
+            assert logs.parent == d1
+            # Idempotent (mkdir parents=True, exist_ok=True)
+            logs2 = log_dir(d1)
+            assert logs2 == logs
+
+            # ── Bad names still rejected ──────────────────────────────
             for bad in ("", "has space", "has/slash", ".", ".."):
                 try:
                     experiment_dir(bad)
@@ -581,12 +611,14 @@ def main():
     runner.run("Test 12: experiment_dir / latest_result / figure_dir",
                test_12_experiment_io)
 
-    # Generate the example PDF/PGF gallery
+    # Generate the example PDF/PGF gallery under figures/examples/
     print()
-    print("── Generating figures_examples/ ──")
-    examples_dir = Path(__file__).resolve().parent.parent / "figures_examples"
+    print("── Generating figures/examples/ ──")
+    examples_dir = (
+        Path(__file__).resolve().parent.parent / "figures" / "examples"
+    )
     generate_examples(examples_dir)
-    n_files = sum(1 for _ in examples_dir.iterdir())
+    n_files = sum(1 for _ in examples_dir.iterdir() if _.is_file())
     print(f"  ✓ wrote {n_files} files to {examples_dir}")
 
     ok = runner.summary()

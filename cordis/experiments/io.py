@@ -9,13 +9,22 @@ storage:
 * ``$CORDIS_FIGURES_DIR`` — defaults to ``./figures``
 
 Per-experiment results live in
-``$CORDIS_RESULTS_DIR/<name>/<timestamp>/`` with a ``latest`` symlink
-updated on each :func:`experiment_dir` call.  Figures live in
-``$CORDIS_FIGURES_DIR/<name>/``.
+``$CORDIS_RESULTS_DIR/exp_<name>/<timestamp>/`` with a ``latest``
+symlink updated on each :func:`experiment_dir` call; figures in
+``$CORDIS_FIGURES_DIR/exp_<name>/``; per-run logs in
+``$CORDIS_RESULTS_DIR/exp_<name>/<timestamp>/logs/``.
+
+The ``exp_`` prefix is added automatically by both
+:func:`experiment_dir` and :func:`figure_dir` so the .gitignore can
+use a single pattern (``exp_*/``) to catch every regenerated output
+directory, while committed reference content (``figures/examples/``,
+``figures/.gitkeep``) sits outside that pattern.  The prefix is
+idempotent — passing ``"exp_foo"`` does not produce ``exp_exp_foo``.
 
 Public API
 ~~~~~~~~~~
-:func:`experiment_dir`, :func:`figure_dir`, :func:`latest_result`.
+:func:`experiment_dir`, :func:`figure_dir`, :func:`latest_result`,
+:func:`log_dir`.
 """
 from __future__ import annotations
 
@@ -33,6 +42,7 @@ _FIGURES_ENV          = "CORDIS_FIGURES_DIR"
 _DEFAULT_RESULTS_ROOT = Path("results")
 _DEFAULT_FIGURES_ROOT = Path("figures")
 _TIMESTAMP_FORMAT     = "%Y%m%d_%H%M%S"
+_EXP_PREFIX           = "exp_"
 
 
 def _root_or_env(
@@ -61,20 +71,30 @@ def _validate_name(name: str) -> None:
         raise ValueError(f"experiment name {name!r} is reserved")
 
 
+def _wrap_name(name: str) -> str:
+    """Prepend the canonical ``exp_`` prefix if not already present.
+
+    Idempotent: ``_wrap_name("foo") == "exp_foo"`` and
+    ``_wrap_name("exp_foo") == "exp_foo"``.
+    """
+    return name if name.startswith(_EXP_PREFIX) else _EXP_PREFIX + name
+
+
 def experiment_dir(
     name: str,
     timestamp: Optional[str] = None,
     root: Optional[Union[str, Path]] = None,
 ) -> Path:
     """
-    Create ``<root>/<name>/<timestamp>/`` and update the ``latest``
+    Create ``<root>/exp_<name>/<timestamp>/`` and update the ``latest``
     symlink alongside it.
 
     Parameters
     ----------
     name : str
         Experiment identifier — must be non-empty and contain no
-        path separators or whitespace.
+        path separators or whitespace.  The ``exp_`` prefix is added
+        automatically (idempotent).
     timestamp : str, optional
         ``YYYYMMDD_HHMMSS``.  Defaults to the current time.
     root : str | Path, optional
@@ -83,7 +103,7 @@ def experiment_dir(
     Returns
     -------
     Path
-        The created leaf directory (already exists).
+        The created leaf directory.
 
     Notes
     -----
@@ -94,10 +114,11 @@ def experiment_dir(
     _validate_name(name)
     r = _root_or_env(_RESULTS_ENV, _DEFAULT_RESULTS_ROOT, root)
     ts = timestamp or _dt.datetime.now().strftime(_TIMESTAMP_FORMAT)
-    leaf = r / name / ts
+    exp_name = _wrap_name(name)
+    leaf = r / exp_name / ts
     leaf.mkdir(parents=True, exist_ok=True)
 
-    latest = r / name / "latest"
+    latest = r / exp_name / "latest"
     try:
         if latest.is_symlink() or latest.exists():
             latest.unlink()
@@ -114,18 +135,19 @@ def figure_dir(
     root: Optional[Union[str, Path]] = None,
 ) -> Path:
     """
-    Create ``<root>/<name>/`` and return it.
+    Create ``<root>/exp_<name>/`` and return it.
 
     Parameters
     ----------
     name : str
         Experiment identifier (same rules as :func:`experiment_dir`).
+        The ``exp_`` prefix is added automatically (idempotent).
     root : str | Path, optional
         Override ``$CORDIS_FIGURES_DIR`` for this call.
     """
     _validate_name(name)
     r = _root_or_env(_FIGURES_ENV, _DEFAULT_FIGURES_ROOT, root)
-    d = r / name
+    d = r / _wrap_name(name)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -135,7 +157,7 @@ def latest_result(
     root: Optional[Union[str, Path]] = None,
 ) -> Path:
     """
-    Resolve ``<root>/<name>/latest`` to the directory it points to.
+    Resolve ``<root>/exp_<name>/latest`` to the directory it points to.
 
     Raises
     ------
@@ -144,10 +166,37 @@ def latest_result(
     """
     _validate_name(name)
     r = _root_or_env(_RESULTS_ENV, _DEFAULT_RESULTS_ROOT, root)
-    latest = r / name / "latest"
+    latest = r / _wrap_name(name) / "latest"
     if not latest.exists():
         raise FileNotFoundError(
             f"No 'latest' for experiment {name!r}: {latest} does not exist."
         )
     return latest.resolve()
+
+
+def log_dir(experiment_path: Union[str, Path]) -> Path:
+    """
+    Create and return ``<experiment_path>/logs/`` for per-run logs.
+
+    Parameters
+    ----------
+    experiment_path : str | Path
+        Path returned by :func:`experiment_dir` (or any directory
+        you wish to host a ``logs/`` subdirectory).
+
+    Returns
+    -------
+    Path
+        The created ``logs/`` directory.
+
+    Notes
+    -----
+    Co-locating logs with results means a single experiment directory
+    (results + logs together) is fully self-contained for sharing or
+    archiving.  The ``latest`` symlink at the parent level brings the
+    most recent log along automatically.
+    """
+    d = Path(experiment_path) / "logs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
