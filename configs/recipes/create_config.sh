@@ -117,6 +117,24 @@ SIGMA_RCS_SQ_DB=-3.0         # Target RCS variance σ²_RCS [dB]
 N_SNAPSHOTS=20               # STAP snapshot count (T)
 CLUTTER_CNR_DB=-10.0         # Clutter-to-noise ratio [dB]
 CLUTTER_AS_DEG=15.0          # Clutter angular spread [deg]
+CLUTTER_CENTER_STRATEGY="target_centroid"
+                             # Spatial placement of the clutter PAS at each Tx AP.
+                             # Controls how κ interacts with beam steering:
+                             #   target_centroid → PAS aligned with AP→target
+                             #     direction; high κ pushes the beam away from
+                             #     the target (sensing-vs-comm coupling).
+                             #   offset          → PAS at (target azimuth +
+                             #     CLUTTER_OFFSET_AZ_DEG); decouples clutter
+                             #     avoidance from comm coverage.
+                             #   uniform         → PAS spans full azimuth; κ
+                             #     becomes a global power regulariser (no
+                             #     directional steering effect).
+                             #   random          → per-AP random U[-π, π];
+                             #     useful for MC over clutter geometries.
+
+CLUTTER_OFFSET_AZ_DEG=60.0   # Azimuth offset added to target azimuth when
+                             # CLUTTER_CENTER_STRATEGY="offset". Typical
+                             # 30–90°. Ignored by other strategies.
 
 LOS_MODEL="3gpp_umi"         # LoS probability model:
                              #   3gpp_umi | always | never | custom
@@ -201,6 +219,8 @@ python3 scripts/create_config.py \
         sensing.n_snapshots="$N_SNAPSHOTS"                    \
         sensing.clutter_cnr_db="$CLUTTER_CNR_DB"              \
         sensing.clutter_as_deg="$CLUTTER_AS_DEG"              \
+        sensing.clutter_center_strategy="$CLUTTER_CENTER_STRATEGY" \
+        sensing.clutter_offset_az_deg="$CLUTTER_OFFSET_AZ_DEG" \
         sensing.los_model="$LOS_MODEL"                        \
         sensing.los_probability_override="$LOS_PROBABILITY_OVERRIDE" \
         sensing.max_tx_aps_per_target="$MAX_TX_APS_PER_TARGET" \

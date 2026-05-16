@@ -72,7 +72,9 @@
     "clutter_cnr_db": -10.0,
     "rho_clt_model": "constant",
     "rho_clt_bandwidth": 0.1,
-    "clutter_as_deg": 15.0
+    "clutter_as_deg": 15.0,
+    "clutter_center_strategy": "target_centroid",
+    "clutter_offset_az_deg": 60.0
   },
   "algorithm": {
     "admm": {

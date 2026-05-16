@@ -131,7 +131,7 @@ class ChannelConfig:
     tau_f: int = 200                # Frame size τ_f [samples]
     tau_p: int = 10                 # Pilot length τ_p (≥ N_ue for no contamination)
     tau_d: int = 100                # Downlink ISAC symbols τ_d
-    # τ_u = τ_f - τ_p - τ_d (uplink payload, not optimized here)
+    # τ_u = τ_f - τ_p - τ_d (uplink payload, not optimised here)
 
     # ── Pilot power ───────────────────────────────────────────────────────
     # IMPORTANT — scaling: pilot_power_db = 10 log10(P_p / σ_n²)
@@ -233,7 +233,7 @@ class SensingConfig:
     clutter_cnr_db: float = -10.0   # Clutter-to-noise ratio [dB]
     # Temporal correlation of clutter (ρ_clt(Δτ)):
     rho_clt_model: str = "constant" # "constant" (ρ=1) | "jakes" | "gaussian"
-    rho_clt_bandwidth: float = 0.1  # Normalized clutter Doppler bandwidth
+    rho_clt_bandwidth: float = 0.1  # Normalised clutter Doppler bandwidth
 
     # ── Spatial correlation at clutter direction ──────────────────────────
     clutter_as_deg: float = 15.0    # Angular spread of clutter returns [°]
@@ -997,6 +997,39 @@ PARAM_REGISTRY: Dict[str, Dict[str, str]] = {
         "help":  "Angular spread of clutter returns; controls spatial correlation C_a of clutter",
         "unit":  "deg",
         "range": "> 0",
+    },
+    "sensing.clutter_center_strategy": {
+        "help":  (
+            "Spatial placement strategy for the clutter Power Angular Spectrum "
+            "(PAS) at each transmit AP. Controls how clutter geometry couples "
+            "to beam steering and therefore how kappa trades off clutter "
+            "avoidance against beam quality. "
+            "'target_centroid': PAS centred on the AP->target-centroid direction "
+            "(clutter and target spatially aligned; high kappa pushes the beam "
+            "away from the target, collapsing both SCNR and SINR for any UE the "
+            "target shadows). "
+            "'offset': PAS centred at (target azimuth + clutter_offset_az_deg), "
+            "decoupling clutter avoidance from comm coverage. "
+            "'uniform': PAS spans the full azimuth (effectively C ~ (P_clt/M)*I); "
+            "the clutter penalty becomes a global power regulariser and kappa "
+            "no longer steers the beam. "
+            "'random': per-AP random azimuth drawn from U[-pi, pi]; useful for "
+            "Monte-Carlo over clutter geometries."
+        ),
+        "unit":  "-",
+        "range": "{target_centroid|offset|uniform|random}",
+    },
+    "sensing.clutter_offset_az_deg": {
+        "help":  (
+            "Azimuth offset added to the target azimuth when "
+            "clutter_center_strategy='offset'; the clutter PAS is centred at "
+            "(target azimuth + clutter_offset_az_deg). Larger values move the "
+            "clutter further from the target direction, reducing the geometric "
+            "coupling between sensing gain and clutter penalty. Ignored by "
+            "other strategies."
+        ),
+        "unit":  "deg",
+        "range": "any real (typical: 30 to 90)",
     },
 
     # ── ADMMConfig ────────────────────────────────────────────────────────

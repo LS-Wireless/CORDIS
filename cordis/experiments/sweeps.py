@@ -15,8 +15,8 @@ Two sweep flavours
 
 :func:`sweep_spec_factory`
     Vary a kwarg passed to a spec-factory function (e.g.
-    ``gamma_u_db``, ``kappa``, ``lambda_``).  The config stays fixed;
-    specs are rebuilt for each sweep point.
+    ``gamma_u_db``, ``kappa``, ``rho_admm``).  The config stays
+    fixed; specs are rebuilt for each sweep point.
 
 Both helpers accept a :class:`SweepAxis` that bundles the sweep values
 with metadata used by plot helpers and table generators.
@@ -185,7 +185,7 @@ def sweep_spec_factory(
         E.g. :func:`cordis.experiments.specs.cordis_only`.
     factory_kwarg : str
         Name of the kwarg whose value sweeps.  E.g. ``"gamma_u_db"``,
-        ``"kappa"``, ``"lambda_"``.
+        ``"kappa"``, ``"rho_admm"``.
     axis : SweepAxis
     runner_cfg : RunnerConfig
     runner_cls, sim_result_from_run :

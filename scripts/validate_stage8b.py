@@ -77,7 +77,7 @@ from cordis.experiments import (         # noqa: E402
     global_mrt_spec, global_zf_spec,
     cordis_only, cordis_vs_centralized,
     cordis_vs_benchmarks, all_algorithms,
-    DEFAULT_GAMMA_DB, DEFAULT_KAPPA, DEFAULT_OMEGA,
+    DEFAULT_GAMMA_DB, DEFAULT_KAPPA,
     # sweeps
     SweepAxis, sweep_config_field, sweep_spec_factory,
     # result
@@ -96,7 +96,10 @@ from cordis.experiments.specs import _DISPLAY, _BENCHMARK_NAME  # noqa: E402
 
 @_register("Test  1: individual spec builders construct valid specs")
 def test_01_individual_specs():
-    """Each spec builder returns an AlgorithmSpec with correct (name, kind)."""
+    """Each spec builder returns an AlgorithmSpec with correct (name, kind),
+    a length-n_ue gamma_u_db vector, and NONE of the keys that broke
+    Stage 8b integration (omega, warm_start, warm_start_from_split,
+    use_cvxpy)."""
     builders = {
         "split":       (split_spec,       "CORDIS-Split",  "cordis_split", None),
         "admm":        (admm_spec,        "CORDIS-ADMM",   "cordis_admm",  None),
@@ -108,27 +111,41 @@ def test_01_individual_specs():
         "global_mrt":  (global_mrt_spec,  "Global-MRT",    "benchmark",    "global_mrt_split"),
         "global_zf":   (global_zf_spec,   "Global-ZF",     "benchmark",    "global_zf_split"),
     }
+    BANNED_KEYS = {"omega", "warm_start", "warm_start_from_split", "use_cvxpy"}
     for key, (fn, want_name, want_kind, want_bn) in builders.items():
-        spec = fn(gamma_u_db=3.0, omega=0.5, kappa=0.1)
+        # Build with n_ue=4 so gamma_u_db becomes a length-4 vector.
+        spec = fn(n_ue=4, gamma_u_db=10.0, kappa=1.0)
         assert spec.name == want_name, f"{key}: name = {spec.name!r}, want {want_name!r}"
         assert spec.kind == want_kind, f"{key}: kind = {spec.kind!r}, want {want_kind!r}"
         if want_bn is not None:
             bn = spec.params.get("benchmark_name")
             assert bn == want_bn, f"{key}: benchmark_name = {bn!r}, want {want_bn!r}"
-    # gamma_u_db propagates and ignored kwargs really are ignored.
-    s = split_spec(gamma_u_db=7.0, this_kwarg_does_not_exist=42)
-    assert s.params["gamma_u_db"] == 7.0
+        # gamma_u_db must be an array of length n_ue (downstream code indexes it).
+        g = spec.params.get("gamma_u_db")
+        assert isinstance(g, np.ndarray) and g.shape == (4,) and float(g[0]) == 10.0, \
+            f"{key}: gamma_u_db = {g!r}, want length-4 array of 10.0"
+        # None of the banned keys must be present — passing any of them
+        # would error in the real algorithms (the Stage 8b integration bugs).
+        present_banned = BANNED_KEYS & set(spec.params)
+        assert not present_banned, \
+            f"{key}: spec.params still contains banned keys {present_banned}"
+    # gamma_u_db propagates from the kwarg and ignored kwargs really are ignored.
+    s = split_spec(n_ue=3, gamma_u_db=7.0, this_kwarg_does_not_exist=42)
+    assert float(s.params["gamma_u_db"][0]) == 7.0
+    assert s.params["gamma_u_db"].shape == (3,)
 
 
 @_register("Test  2: ADMM spec carries kappa explicitly (Stage 7 fix)")
 def test_02_admm_kappa_explicit():
-    """admm_spec must put kappa in params so the dispatcher forwards it."""
-    s = admm_spec(kappa=0.25, gamma_u_db=4.0, rho_admm=12.0, n_admm_max=15)
+    """admm_spec must put kappa in params so the dispatcher forwards it,
+    and the default must be non-zero (matching configs/default.json)."""
+    s = admm_spec(n_ue=4, kappa=0.25, gamma_u_db=4.0, rho_admm=12.0, n_admm_max=15)
     assert "kappa" in s.params and s.params["kappa"] == 0.25
     assert s.params["rho_admm"] == 12.0
     assert s.params["n_admm_max"] == 15
-    # Default kappa is non-zero (the Stage 7 bug was that κ defaulted to 0).
-    s_default = admm_spec()
+    # Default kappa is non-zero (the Stage-7 bug was κ defaulting to 0 in the
+    # function signature; cfg.algorithm.admm.kappa = 1.0).
+    s_default = admm_spec(n_ue=4)
     assert s_default.params["kappa"] == DEFAULT_KAPPA
     assert s_default.params["kappa"] > 0
 
@@ -152,7 +169,7 @@ def test_03_spec_set_factories():
                                    "Global-MRT", "Global-ZF"]),
     }
     for label, (fn, want_n, want_names) in sets.items():
-        specs = fn(gamma_u_db=3.0, omega=0.5, kappa=0.1)
+        specs = fn(n_ue=4, gamma_u_db=3.0, kappa=0.1)
         assert len(specs) == want_n, \
             f"{label}: got {len(specs)} specs, want {want_n}"
         got = [s.name for s in specs]
@@ -403,7 +420,7 @@ def test_11_result_table():
 def test_12_registry_contents():
     expected = {
         "sinr_cdf", "scnr_cdf",
-        "gamma_sweep", "omega_sweep", "kappa_sweep",
+        "gamma_sweep", "kappa_sweep", "clutter_cnr_sweep",
         "snr_sweep", "n_ue_sweep", "n_ap_sweep", "antennas_sweep",
         "convergence_trace", "fronthaul_table",
     }
@@ -447,12 +464,12 @@ def test_13_run_signatures():
 def _try_full_import():
     """Return (cfg, RunnerConfig) tuple, or raise _SkipTest with a reason."""
     try:
-        from cordis.utils.config import CORDISConfig          # noqa: F401
-        from cordis.simulation.runner import (                 # noqa: F401
+        from cordis.utils.config import load_config              # noqa: F401
+        from cordis.simulation.runner import (                   # noqa: F401
             MonteCarloRunner, RunnerConfig,
         )
         from cordis.simulation.scenario import build_scenario_from_seeds  # noqa: F401
-        from cordis.simulation.result import SimResult         # noqa: F401
+        from cordis.simulation.result import SimResult           # noqa: F401
     except ImportError as e:
         raise _SkipTest(f"full CORDIS install not available: {e}")
 
@@ -469,8 +486,12 @@ def _try_full_import():
             "small.json / default.json"
         )
 
-    cfg = CORDISConfig.from_json(cfg_path) if hasattr(CORDISConfig, "from_json") \
-          else CORDISConfig.load(cfg_path)
+    # Use the canonical load_config(); CORDISConfig has no .load() classmethod.
+    try:
+        cfg = load_config(cfg_path)
+    except Exception as e:
+        raise _SkipTest(f"could not load {cfg_path}: {e}")
+
     runner_cfg = RunnerConfig(
         n_drops=2, n_realizations_per_drop=1,
         n_workers=1, verbose=0, base_seed=42,
@@ -488,6 +509,29 @@ def test_14_integration_gamma_sweep():
     assert result.kind == "sweep"
     assert result.name == "gamma_sweep"
     assert sorted(result.sweep_results.keys()) == [0.0, 6.0]
+
+    # Data-quality check: at least one sweep point must have at least one
+    # algorithm with non-NaN min_sinr_db.  This catches the Stage-8b spec
+    # bugs (omega-as-float, warm_start_from_split, etc.) which would
+    # silently fail every algorithm without breaking the structural
+    # assertions above.
+    points_with_data = 0
+    for v, sr in result.sweep_results.items():
+        for alg_name in ("CORDIS-Split", "CORDIS-ADMM", "Centralized"):
+            try:
+                val = sr.mean(alg_name, "min_sinr_db")
+                if val == val:               # not NaN
+                    points_with_data += 1
+                    break
+            except (KeyError, AttributeError, TypeError, ValueError):
+                pass
+    assert points_with_data > 0, (
+        "No algorithm produced min_sinr_db data at any sweep point — "
+        "all trials failed. Check spec.params for keys the real "
+        "algorithms reject (omega-as-float, warm_start_from_split, "
+        "warm_start, use_cvxpy=False)."
+    )
+
     # Save + reload round-trip with the REAL SimResult.
     with tempfile.TemporaryDirectory() as td:
         out_dir = Path(td) / "gamma_sweep"

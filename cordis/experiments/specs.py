@@ -28,38 +28,54 @@ Spec set factories (composition)
 :func:`cordis_vs_benchmarks`  — 6 specs (+ MRT/ZF/RZF/LR-MMSE)
 :func:`all_algorithms`        — 9 specs (+ Global-MRT/Global-ZF)
 
-API match with Stage 7 / Stage 6d
----------------------------------
+API match with the real algorithm stack
+---------------------------------------
 * ``AlgorithmSpec(name, kind, params)`` from
   ``cordis.simulation.scenario``.  ``kind`` is one of the four entries
-  in :data:`ALGORITHM_KINDS`; benchmarks use ``kind="benchmark"`` with
-  the actual baseline keyed by ``params["benchmark_name"]``.
-* Common ``params`` keys (forwarded by the dispatcher):
+  in ``ALGORITHM_KINDS``; benchmarks use ``kind="benchmark"`` with the
+  actual baseline keyed by ``params["benchmark_name"]``.
 
-  - ``cordis_split``  : ``comm_bf_method``, ``gamma_u_db``, ``omega``,
-                        ``use_cvxpy``
-  - ``cordis_admm``   : ``gamma_u_db``, ``omega``, ``rho_admm``,
-                        ``kappa``, ``xi_slack`` / ``slack_tol``,
-                        ``n_admm_max``, ``eps_pri``, ``eps_dual``,
-                        ``warm_start_from_split``
-  - ``centralized``   : ``gamma_u_db``, ``omega``, ``use_cvxpy``,
-                        ``warm_start``
-  - ``benchmark``     : ``benchmark_name`` (required), ``gamma_u_db``,
-                        ``omega``, ``use_cvxpy``
+* The journal-paper formulation (which Stage 6c/6d implement) has
+  **no λ-style comm/sensing trade-off**.  SINR is a hard constraint,
+  the sensing utility is maximised subject to it, and κ alone weights
+  the clutter penalty.  These specs therefore expose only the knobs
+  the real solvers actually consume; ``omega`` (per-target priority
+  Dict[int, float]) is left at its default (uniform 1.0) and is NOT
+  a tunable in the spec API — pass it directly via
+  ``AlgorithmSpec.params`` if you need non-uniform priorities.
 
-Note that ``gamma_u_db`` may be passed as a scalar — the dispatcher
-broadcasts it across all UEs — so spec builders here don't need to
-know ``n_ue`` at spec-build time.
+* ``gamma_u_db`` is required to be an array of length n_ue
+  (downstream code does ``gamma_lin[u]``); spec builders therefore
+  take ``n_ue`` and broadcast a scalar to a vector via
+  :func:`numpy.full`.
+
+* Stage-7 dispatcher gaps closed by these specs:
+    - ``admm_spec`` explicitly forwards ``kappa`` (function default
+      0.0 overrides the cfg-level 1.0 if not passed; the dispatcher
+      never reads cfg.algorithm.admm.kappa).
+    - ``admm_spec`` also forwards ``rho_admm`` and ``n_admm_max``
+      so cfg values propagate.
+
+* The following knobs are deliberately NOT placed in spec.params
+  even though the dispatcher would forward them:
+    - ``warm_start_from_split`` — not a parameter of
+      ``solve_cordis_admm``; Phase-I warm start is always done.
+    - ``warm_start`` — not a parameter of ``solve_centralized``
+      (the real name is ``warm_start_psr``; dispatcher fwd_keys
+      has the typo, so passing it would TypeError).
+    - ``use_cvxpy`` — defaults to None (auto-detect), which is what
+      we want; passing False forces the scipy fallback.
 
 Spec builders silently absorb unrecognised keyword arguments
 (``**ignored``) so spec-set factories can pass a single uniform kwarg
-bundle (γ, κ, ω, …) and each builder picks up only the parameters it
-consumes.  This makes parameter sweeps trivial: vary one kwarg, every
-relevant spec responds, irrelevant ones drop it.
+bundle (γ, κ, ρ, …) and each builder picks up only the parameters it
+consumes.  This is the property parameter sweeps rely on.
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List
+
+import numpy as np
 
 from cordis.simulation.scenario import AlgorithmSpec
 
@@ -75,8 +91,7 @@ _BENCHMARK_NAME: Dict[str, str] = {
     "lrmmse":       "lr_mmse_split",
     "global_mrt":   "global_mrt_split",
     "global_zf":    "global_zf_split",
-    # PA-fixed variants — not exposed by default but available for
-    # specialised comparisons (e.g. an "LR-MMSE no PA" line).
+    # PA-fixed variants — available but not in the default spec sets.
     "mrt_fixed":    "mrt_fixed",
     "rzf_fixed":    "rzf_fixed",
     "lrmmse_fixed": "lr_mmse_fixed",
@@ -98,21 +113,24 @@ _DISPLAY: Dict[str, str] = {
 
 
 # ─────────────────────────────────────────────────────────────────────
-#  Sensible defaults (consumed by the spec builders)
+#  Sensible defaults — aligned with configs/default.json so a spec
+#  built with no overrides matches what cfg promises.
 # ─────────────────────────────────────────────────────────────────────
 
-DEFAULT_GAMMA_DB    = 3.0     # per-UE SINR target [dB]
-DEFAULT_KAPPA       = 0.1     # prox regularisation weight
-DEFAULT_OMEGA       = 0.5     # comm/sensing trade-off in [0, 1]
-DEFAULT_RHO_ADMM    = 10.0    # ADMM penalty parameter
-DEFAULT_N_ADMM_MAX  = 20
-DEFAULT_XI_SLACK    = 1e-3    # ADMM slack tolerance (a.k.a. slack_tol)
+DEFAULT_GAMMA_DB    = 10.0    # matches cfg.algorithm.split.gamma_db
+DEFAULT_KAPPA       = 1.0     # matches cfg.algorithm.admm.kappa
+DEFAULT_RHO_ADMM    = 1.0     # matches cfg.algorithm.admm.rho
+DEFAULT_N_ADMM_MAX  = 50      # matches cfg.algorithm.admm.n_max
+DEFAULT_XI_SLACK    = 1e4     # matches cfg.algorithm.admm.xi_slack
 
-# Backwards-compatible aliases (some Stage 8c scripts may use the
-# paper's λ, ρ, slack_tol naming).
-DEFAULT_LAMBDA      = DEFAULT_OMEGA
-DEFAULT_RHO         = DEFAULT_RHO_ADMM
-DEFAULT_SLACK_TOL   = DEFAULT_XI_SLACK
+
+def _gamma_vec(gamma_u_db: float, n_ue: int) -> np.ndarray:
+    """Per-UE SINR target vector (uniform across UEs).
+
+    Required because the solvers index ``gamma_lin[u]`` per user — a
+    scalar becomes a 0-d array which is unindexable.
+    """
+    return np.full(int(n_ue), float(gamma_u_db), dtype=float)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -127,10 +145,8 @@ DEFAULT_SLACK_TOL   = DEFAULT_XI_SLACK
 
 def split_spec(
     *,
+    n_ue: int = 1,
     gamma_u_db: float = DEFAULT_GAMMA_DB,
-    omega:      float = DEFAULT_OMEGA,
-    comm_bf_method: str = "lr_mmse",
-    use_cvxpy:  bool  = False,
     **ignored,
 ) -> AlgorithmSpec:
     """CORDIS-Split (Algorithm 1): local-BF + centralised P-Split PA."""
@@ -138,66 +154,67 @@ def split_spec(
         name=_DISPLAY["split"],
         kind="cordis_split",
         params={
-            "gamma_u_db":     float(gamma_u_db),
-            "omega":          float(omega),
-            "comm_bf_method": str(comm_bf_method),
-            "use_cvxpy":      bool(use_cvxpy),
+            "gamma_u_db": _gamma_vec(gamma_u_db, n_ue),
+            # comm_bf_method defaults to "lr_mmse" in the dispatcher.
+            # omega / use_cvxpy left out → solver-side defaults apply
+            # (uniform target priorities, CVXPY auto-detect).
         },
     )
 
 
 def admm_spec(
     *,
+    n_ue: int = 1,
     gamma_u_db: float = DEFAULT_GAMMA_DB,
-    omega:      float = DEFAULT_OMEGA,
     kappa:      float = DEFAULT_KAPPA,
     rho_admm:   float = DEFAULT_RHO_ADMM,
     n_admm_max: int   = DEFAULT_N_ADMM_MAX,
-    xi_slack:   float = DEFAULT_XI_SLACK,
-    warm_start_from_split: bool = True,
     **ignored,
 ) -> AlgorithmSpec:
     """CORDIS-ADMM (Algorithm 2): decentralised consensus-ADMM.
 
     Note
     ----
-    ``kappa`` is explicitly placed in ``spec.params`` to work around the
-    Stage 7 dispatcher gap (cfg.algorithm.admm.kappa was not being
-    forwarded to the solver).  Keeping it in spec.params guarantees the
-    value reaches the solver regardless of where cfg defaults live.
+    ``kappa``, ``rho_admm`` and ``n_admm_max`` are placed explicitly in
+    spec.params because the Stage-7 dispatcher does NOT read these from
+    ``cfg.algorithm.admm.*``.  Without them, ``solve_cordis_admm``
+    would silently fall back to its function-level defaults
+    (kappa=0.0 in particular — the Stage-7 ADMM-with-κ=0 bug).
     """
     return AlgorithmSpec(
         name=_DISPLAY["admm"],
         kind="cordis_admm",
         params={
-            "gamma_u_db":            float(gamma_u_db),
-            "omega":                 float(omega),
-            "rho_admm":              float(rho_admm),
-            "kappa":                 float(kappa),
-            "xi_slack":              float(xi_slack),
-            "n_admm_max":            int(n_admm_max),
-            "warm_start_from_split": bool(warm_start_from_split),
+            "gamma_u_db":  _gamma_vec(gamma_u_db, n_ue),
+            "kappa":       float(kappa),
+            "rho_admm":    float(rho_admm),
+            "n_admm_max":  int(n_admm_max),
+            # xi_slack / slack_tol / eps_pri / eps_dual / warm_start_from_split
+            # deliberately NOT included — see module docstring.
         },
     )
 
 
 def centralized_spec(
     *,
+    n_ue: int = 1,
     gamma_u_db: float = DEFAULT_GAMMA_DB,
-    omega:      float = DEFAULT_OMEGA,
-    use_cvxpy:  bool  = False,
-    warm_start: bool  = True,
     **ignored,
 ) -> AlgorithmSpec:
-    """Centralized joint BF + PA (upper bound)."""
+    """Centralized joint BF + PA (upper bound).
+
+    Note: ``solve_centralized`` reads κ from ``cfg.algorithm.admm.kappa``
+    directly (the dispatcher does NOT forward κ for kind="centralized"),
+    so the spec does not carry κ.  For a κ sweep, override
+    ``cfg.algorithm.admm.kappa`` per sweep point — see
+    :func:`cordis.experiments.registry.run_kappa_sweep`.
+    """
     return AlgorithmSpec(
         name=_DISPLAY["centralized"],
         kind="centralized",
         params={
-            "gamma_u_db": float(gamma_u_db),
-            "omega":      float(omega),
-            "use_cvxpy":  bool(use_cvxpy),
-            "warm_start": bool(warm_start),
+            "gamma_u_db": _gamma_vec(gamma_u_db, n_ue),
+            # warm_start / use_cvxpy intentionally omitted (see module docstring).
         },
     )
 
@@ -205,9 +222,8 @@ def centralized_spec(
 def _benchmark_spec(
     kind: str,
     *,
+    n_ue: int = 1,
     gamma_u_db: float = DEFAULT_GAMMA_DB,
-    omega:      float = DEFAULT_OMEGA,
-    use_cvxpy:  bool  = False,
     **ignored,
 ) -> AlgorithmSpec:
     """Generic builder for any registered benchmark."""
@@ -216,9 +232,8 @@ def _benchmark_spec(
         kind="benchmark",
         params={
             "benchmark_name": _BENCHMARK_NAME[kind],
-            "gamma_u_db":     float(gamma_u_db),
-            "omega":          float(omega),
-            "use_cvxpy":      bool(use_cvxpy),
+            "gamma_u_db":     _gamma_vec(gamma_u_db, n_ue),
+            # omega / use_cvxpy left out → solver-side defaults apply.
         },
     )
 
@@ -286,11 +301,9 @@ def all_algorithms(**kw) -> List[AlgorithmSpec]:
 __all__ = [
     # Display-name + benchmark-name lookup tables
     "_DISPLAY", "_BENCHMARK_NAME",
-    # Defaults
-    "DEFAULT_GAMMA_DB", "DEFAULT_KAPPA", "DEFAULT_OMEGA",
+    # Defaults (aligned with configs/default.json)
+    "DEFAULT_GAMMA_DB", "DEFAULT_KAPPA",
     "DEFAULT_RHO_ADMM", "DEFAULT_N_ADMM_MAX", "DEFAULT_XI_SLACK",
-    # Backwards-compat aliases
-    "DEFAULT_LAMBDA", "DEFAULT_RHO", "DEFAULT_SLACK_TOL",
     # Individual spec builders
     "split_spec", "admm_spec", "centralized_spec",
     "mrt_spec", "zf_spec", "rzf_spec", "lrmmse_spec",

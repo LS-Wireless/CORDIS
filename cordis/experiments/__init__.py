@@ -51,11 +51,9 @@ from cordis.experiments.result import (
 )
 
 from cordis.experiments.specs import (
-    # defaults
-    DEFAULT_GAMMA_DB, DEFAULT_KAPPA, DEFAULT_OMEGA,
+    # defaults (aligned with configs/default.json)
+    DEFAULT_GAMMA_DB, DEFAULT_KAPPA,
     DEFAULT_RHO_ADMM, DEFAULT_N_ADMM_MAX, DEFAULT_XI_SLACK,
-    # backwards-compat aliases for paper notation
-    DEFAULT_LAMBDA, DEFAULT_RHO, DEFAULT_SLACK_TOL,
     # individual spec builders
     split_spec, admm_spec, centralized_spec,
     mrt_spec, zf_spec, rzf_spec, lrmmse_spec,
@@ -77,7 +75,7 @@ from cordis.experiments.registry import (
     get_experiment,
     # convenience direct exports
     run_sinr_cdf, run_scnr_cdf,
-    run_gamma_sweep, run_omega_sweep, run_kappa_sweep,
+    run_gamma_sweep, run_kappa_sweep, run_clutter_cnr_sweep,
     run_snr_sweep, run_n_ue_sweep, run_n_ap_sweep,
     run_antennas_sweep,
     run_convergence_trace, run_fronthaul_table,
@@ -90,9 +88,8 @@ __all__ = [
     # result
     "ExperimentResult", "LoadedADMMResult", "VALID_KINDS",
     # specs — defaults
-    "DEFAULT_GAMMA_DB", "DEFAULT_KAPPA", "DEFAULT_OMEGA",
+    "DEFAULT_GAMMA_DB", "DEFAULT_KAPPA",
     "DEFAULT_RHO_ADMM", "DEFAULT_N_ADMM_MAX", "DEFAULT_XI_SLACK",
-    "DEFAULT_LAMBDA", "DEFAULT_RHO", "DEFAULT_SLACK_TOL",
     # specs — builders
     "split_spec", "admm_spec", "centralized_spec",
     "mrt_spec", "zf_spec", "rzf_spec", "lrmmse_spec",
@@ -105,7 +102,7 @@ __all__ = [
     # registry
     "REGISTRY", "list_experiments", "get_experiment",
     "run_sinr_cdf", "run_scnr_cdf",
-    "run_gamma_sweep", "run_omega_sweep", "run_kappa_sweep",
+    "run_gamma_sweep", "run_kappa_sweep", "run_clutter_cnr_sweep",
     "run_snr_sweep", "run_n_ue_sweep", "run_n_ap_sweep",
     "run_antennas_sweep",
     "run_convergence_trace", "run_fronthaul_table",

@@ -10,7 +10,7 @@ the ``experiment_dir(name)`` argument) to these callables.  Each
 function:
 
 1. Optionally overrides a few fields on ``cfg`` / ``runner_cfg`` to match
-   the experiment's needs (e.g. larger ``n_drops`` for CDFs, smaller for
+   the experiment's needs (larger ``n_drops`` for CDFs, smaller for
    sweeps).
 2. Builds the appropriate :class:`AlgorithmSpec` list via
    :mod:`cordis.experiments.specs`.
@@ -19,25 +19,43 @@ function:
 
 Eleven experiments are registered:
 
-==================  =========  =========================  ============================
-name                kind       spec set                   swept axis
-==================  =========  =========================  ============================
-sinr_cdf            single     all_algorithms             —
-scnr_cdf            single     all_algorithms             —
-gamma_sweep         sweep      cordis_vs_centralized      γ [dB]
-omega_sweep         sweep      cordis_vs_centralized      ω ∈ [0,1]
-kappa_sweep         sweep      cordis_vs_centralized      κ
-snr_sweep           sweep      all_algorithms             Pₘₐₓ/σ² [dB]
-n_ue_sweep          sweep      all_algorithms             N_UE
-n_ap_sweep          sweep      all_algorithms             N_AP
-antennas_sweep      sweep      cordis_vs_benchmarks       M (antennas/AP)
-convergence_trace   trace      CORDIS-ADMM only           ADMM iter
-fronthaul_table     table      CORDIS-ADMM (avg iters)    —
-==================  =========  =========================  ============================
+===================  =========  =========================  ============================
+name                 kind       spec set                   swept axis
+===================  =========  =========================  ============================
+sinr_cdf             single     all_algorithms             —
+scnr_cdf             single     all_algorithms             —
+gamma_sweep          sweep      cordis_vs_centralized      γ [dB]
+clutter_cnr_sweep    sweep      cordis_vs_centralized      Clutter CNR [dB]
+kappa_sweep          sweep      cordis_vs_centralized      κ
+snr_sweep            sweep      all_algorithms             Pₘₐₓ/σ² [dB]
+n_ue_sweep           sweep      all_algorithms             N_UE
+n_ap_sweep           sweep      all_algorithms             N_AP
+antennas_sweep       sweep      cordis_vs_benchmarks       M (antennas/AP)
+convergence_trace    trace      CORDIS-ADMM only           ADMM iter
+fronthaul_table      table      CORDIS-ADMM (avg iters)    —
+===================  =========  =========================  ============================
 
-Note: the registry name ``omega_sweep`` is used because the underlying
-code parameter is ``omega``; many papers call this λ.  Display labels
-use whichever LaTeX symbol the user prefers.
+Notes
+-----
+* ``clutter_cnr_sweep`` probes the sensing/comm tension through the
+  channel: stronger clutter raises the clutter-plus-noise floor in
+  ``R_g_a_r`` (Proposition 3), so at fixed κ the algorithm trades
+  raw SCNR against SINR feasibility.  Useful when one wants to
+  characterise the tension geometrically rather than through a
+  trade-off knob (the journal-paper formulation has no λ-style
+  scalar trade-off; SINR is a hard constraint, sensing is
+  maximised, and κ alone weights clutter avoidance).
+
+* ``kappa_sweep`` updates BOTH ``cfg.algorithm.admm.kappa`` (for
+  Centralized, which reads κ from cfg directly) AND rebuilds the
+  spec with the new κ (for ADMM, which reads κ from spec.params via
+  the dispatcher).  Without overriding cfg, Centralized would stay
+  pinned at its baseline κ across the sweep.
+
+* ``n_ue_sweep`` and ``kappa_sweep`` use custom inner loops rather
+  than the generic sweep helpers because they need to mutate cfg AND
+  rebuild specs per sweep point (n_ue affects the size of
+  ``gamma_u_db``; κ needs to update two places).
 
 Use :func:`list_experiments` to introspect.
 """
@@ -71,11 +89,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────
 
 def _override_runner(runner_cfg: Any, **overrides) -> Any:
-    """Return a shallow copy of runner_cfg with selected fields replaced.
-
-    Uses dataclasses.replace if runner_cfg is a dataclass; otherwise
-    shallow-copies and sets attributes.
-    """
+    """Return a shallow copy of runner_cfg with selected fields replaced."""
     if dataclasses.is_dataclass(runner_cfg):
         return dataclasses.replace(runner_cfg, **overrides)
     rc = copy.copy(runner_cfg)
@@ -109,10 +123,20 @@ def _run_single(cfg, runner_cfg, specs):
 
 
 def _cfg_summary(cfg: Any) -> Dict[str, Any]:
-    """Best-effort extraction of headline cfg fields for the manifest."""
+    """Best-effort extraction of headline cfg fields for the manifest.
+
+    Field paths reflect the real CORDISConfig tree (see
+    cordis/utils/config.py): topology.{n_ap, n_ue, n_targets, n_ant},
+    channel.snr_db, algorithm.{admm.kappa, split.gamma_db}.
+    """
     summary: Dict[str, Any] = {}
-    for path in ("topology.n_ap", "topology.n_ue", "topology.n_targets",
-                 "system.n_ant", "system.snr_db", "system.Pmax_dbm"):
+    for path in (
+        "topology.n_ap", "topology.n_ue",
+        "topology.n_targets", "topology.n_ant",
+        "channel.snr_db",
+        "algorithm.admm.kappa",
+        "algorithm.split.gamma_db",
+    ):
         try:
             cursor = cfg
             for p in path.split("."):
@@ -121,6 +145,14 @@ def _cfg_summary(cfg: Any) -> Dict[str, Any]:
         except AttributeError:
             pass
     return summary
+
+
+def _get_n_ue(cfg: Any, default: int = 4) -> int:
+    """Best-effort extraction of cfg.topology.n_ue with a sane default."""
+    try:
+        return int(cfg.topology.n_ue)
+    except AttributeError:
+        return default
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -136,6 +168,7 @@ def run_sinr_cdf(
 ) -> ExperimentResult:
     """Empirical CDF of min-SINR across N_drops × N_realisations trials."""
     spec_kwargs = spec_kwargs or {}
+    spec_kwargs.setdefault("n_ue", _get_n_ue(cfg))
     specs = all_algorithms(**spec_kwargs)
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
@@ -163,6 +196,7 @@ def run_scnr_cdf(
 ) -> ExperimentResult:
     """Empirical CDF of sum-SCNR (sensing figure-of-merit)."""
     spec_kwargs = spec_kwargs or {}
+    spec_kwargs.setdefault("n_ue", _get_n_ue(cfg))
     specs = all_algorithms(**spec_kwargs)
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
@@ -206,6 +240,7 @@ def run_gamma_sweep(
                           n_realizations_per_drop=n_realizations)
     results = sweep_spec_factory(
         cfg, cordis_vs_centralized, "gamma_u_db", axis, rc,
+        n_ue=_get_n_ue(cfg),
     )
     return ExperimentResult(
         name="gamma_sweep", kind="sweep",
@@ -216,40 +251,10 @@ def run_gamma_sweep(
     )
 
 
-def run_omega_sweep(
-    cfg, runner_cfg,
-    *,
-    omega_values: Optional[List[float]] = None,
-    n_drops: int = 20,
-    n_realizations: int = 2,
-    display: str = r"$\omega$",
-) -> ExperimentResult:
-    """Sweep comm/sensing trade-off ω ∈ [0, 1].
-
-    Paper convention uses λ; the code parameter is ``omega``.  Pass
-    ``display=r"$\\lambda$"`` to render the paper label.
-    """
-    if omega_values is None:
-        omega_values = [0.1, 0.3, 0.5, 0.7, 0.9]
-    axis = SweepAxis(
-        name="omega",
-        values=omega_values,
-        display=display,
-    )
-    rc = _override_runner(runner_cfg,
-                          n_drops=n_drops,
-                          n_realizations_per_drop=n_realizations)
-    results = sweep_spec_factory(
-        cfg, cordis_vs_centralized, "omega", axis, rc,
-    )
-    return ExperimentResult(
-        name="omega_sweep", kind="sweep",
-        sweep_results=results, sweep_axis=axis,
-        metadata={"n_drops": n_drops, "n_realizations": n_realizations,
-                  "spec_set": "cordis_vs_centralized",
-                  "cfg_summary": _cfg_summary(cfg)},
-    )
-
+# ─────────────────────────────────────────────────────────────────────
+#  kappa_sweep — needs custom loop because Centralized reads κ from cfg,
+#  ADMM reads κ from spec.params (dispatcher gap).  Update BOTH per point.
+# ─────────────────────────────────────────────────────────────────────
 
 def run_kappa_sweep(
     cfg, runner_cfg,
@@ -258,14 +263,20 @@ def run_kappa_sweep(
     n_drops: int = 20,
     n_realizations: int = 2,
 ) -> ExperimentResult:
-    """Sweep prox-regularisation weight κ.
+    """Sweep prox-regularisation weight κ ∈ [0, 2].
 
-    Only CORDIS-ADMM and Centralized actually consume κ; CORDIS-Split
-    absorbs it via ``**ignored`` and produces the same output at every
-    point (a flat line in the plot — informative as a control).
+    Per joint_opt.py, κ is auto-scaled internally so user-facing κ=1
+    means "strong clutter avoidance".  Useful range is [0, 2].
+
+    Two places must be updated per sweep point:
+      * ``cfg.algorithm.admm.kappa`` — read by ``solve_centralized``
+        directly (the dispatcher does NOT forward κ for kind="centralized").
+      * ``spec.params["kappa"]`` — forwarded by the dispatcher to
+        ``solve_cordis_admm`` (the Stage-7 gap is that this isn't
+        derived from cfg).
     """
     if kappa_values is None:
-        kappa_values = [0.0, 0.01, 0.05, 0.1, 0.5, 1.0]
+        kappa_values = [0.0, 0.1, 0.5, 1.0, 1.5, 2.0]
     axis = SweepAxis(
         name="kappa",
         values=kappa_values,
@@ -274,9 +285,15 @@ def run_kappa_sweep(
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
-    results = sweep_spec_factory(
-        cfg, cordis_vs_centralized, "kappa", axis, rc,
-    )
+    n_ue = _get_n_ue(cfg)
+
+    results: Dict[float, Any] = {}
+    for k in axis.values:
+        cfg_v = _override_cfg(cfg, **{"algorithm.admm.kappa": float(k)})
+        specs = cordis_vs_centralized(n_ue=n_ue, kappa=float(k))
+        sr = _run_single(cfg_v, rc, specs)
+        results[float(k)] = sr
+
     return ExperimentResult(
         name="kappa_sweep", kind="sweep",
         sweep_results=results, sweep_axis=axis,
@@ -296,7 +313,7 @@ def run_snr_sweep(
     snr_values_db: Optional[List[float]] = None,
     n_drops: int = 20,
     n_realizations: int = 2,
-    field_path: str = "system.snr_db",
+    field_path: str = "channel.snr_db",
 ) -> ExperimentResult:
     """Sweep operating SNR (Pₘₐₓ / σ²) [dB]."""
     if snr_values_db is None:
@@ -307,7 +324,7 @@ def run_snr_sweep(
         display="SNR [dB]",
         unit="dB",
     )
-    specs = all_algorithms()
+    specs = all_algorithms(n_ue=_get_n_ue(cfg))
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
@@ -322,6 +339,46 @@ def run_snr_sweep(
     )
 
 
+def run_clutter_cnr_sweep(
+    cfg, runner_cfg,
+    *,
+    cnr_values_db: Optional[List[float]] = None,
+    n_drops: int = 20,
+    n_realizations: int = 2,
+    field_path: str = "sensing.clutter_cnr_db",
+) -> ExperimentResult:
+    """Sweep clutter-to-noise ratio (CNR) in dB.
+
+    Probes the sensing/comm tension through the channel rather than
+    through an algorithm knob: stronger clutter raises the
+    clutter-plus-noise floor in ``R_g_a_r`` (Proposition 3), so at
+    fixed κ the algorithm trades raw SCNR against SINR feasibility.
+    A natural fixed-κ way to probe the journal-paper formulation,
+    which has no λ-style scalar comm/sensing trade-off.
+    """
+    if cnr_values_db is None:
+        cnr_values_db = [-20.0, -15.0, -10.0, -5.0, 0.0, 5.0]
+    axis = SweepAxis(
+        name="clutter_cnr_db",
+        values=cnr_values_db,
+        display="Clutter CNR [dB]",
+        unit="dB",
+    )
+    specs = cordis_vs_centralized(n_ue=_get_n_ue(cfg))
+    rc = _override_runner(runner_cfg,
+                          n_drops=n_drops,
+                          n_realizations_per_drop=n_realizations)
+    results = sweep_config_field(cfg, specs, field_path, axis, rc)
+    return ExperimentResult(
+        name="clutter_cnr_sweep", kind="sweep",
+        sweep_results=results, sweep_axis=axis,
+        metadata={"n_drops": n_drops, "n_realizations": n_realizations,
+                  "field_path": field_path,
+                  "spec_set": "cordis_vs_centralized",
+                  "cfg_summary": _cfg_summary(cfg)},
+    )
+
+
 def run_n_ue_sweep(
     cfg, runner_cfg,
     *,
@@ -330,7 +387,11 @@ def run_n_ue_sweep(
     n_realizations: int = 2,
     field_path: str = "topology.n_ue",
 ) -> ExperimentResult:
-    """Sweep number of UEs (loading / scalability)."""
+    """Sweep number of UEs (loading / scalability).
+
+    Custom inner loop because n_ue affects the size of ``gamma_u_db``,
+    so specs must be rebuilt per sweep point.
+    """
     if n_ue_values is None:
         n_ue_values = [2, 4, 6, 8, 10]
     axis = SweepAxis(
@@ -338,11 +399,16 @@ def run_n_ue_sweep(
         values=[float(v) for v in n_ue_values],
         display=r"$N_{\rm UE}$",
     )
-    specs = all_algorithms()
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
-    results = sweep_config_field(cfg, specs, field_path, axis, rc)
+    results: Dict[float, Any] = {}
+    for n_ue in axis.values:
+        n_ue_int = int(n_ue)
+        cfg_v = _override_cfg(cfg, **{field_path: n_ue_int})
+        specs = all_algorithms(n_ue=n_ue_int)
+        sr = _run_single(cfg_v, rc, specs)
+        results[float(n_ue)] = sr
     return ExperimentResult(
         name="n_ue_sweep", kind="sweep",
         sweep_results=results, sweep_axis=axis,
@@ -369,7 +435,7 @@ def run_n_ap_sweep(
         values=[float(v) for v in n_ap_values],
         display=r"$N_{\rm AP}$",
     )
-    specs = all_algorithms()
+    specs = all_algorithms(n_ue=_get_n_ue(cfg))
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
@@ -390,7 +456,7 @@ def run_antennas_sweep(
     n_ant_values: Optional[List[int]] = None,
     n_drops: int = 20,
     n_realizations: int = 2,
-    field_path: str = "system.n_ant",
+    field_path: str = "topology.n_ant",
 ) -> ExperimentResult:
     """Sweep antennas per AP (M)."""
     if n_ant_values is None:
@@ -400,7 +466,7 @@ def run_antennas_sweep(
         values=[float(v) for v in n_ant_values],
         display=r"$M$",
     )
-    specs = cordis_vs_benchmarks()
+    specs = cordis_vs_benchmarks(n_ue=_get_n_ue(cfg))
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
@@ -433,28 +499,31 @@ def run_convergence_trace(
     The Monte-Carlo runner aggregates per-trial outputs and only stores
     summary diagnostics, so this experiment bypasses the runner and
     calls :func:`run_cordis_admm` directly.
-
-    Required APIs (already present in Stage 7):
-    * ``cordis.simulation.scenario.build_scenario_from_seeds``
-    * ``cordis.algorithms.joint_opt.run_cordis_admm`` returning an
-      ``ADMMResult`` with ``primal_res_history``, ``dual_res_history``,
-      and (where available) per-iteration slack history.
     """
     from cordis.simulation.scenario import build_scenario_from_seeds
     from cordis.algorithms.joint_opt import run_cordis_admm
 
     spec_kwargs = spec_kwargs or {}
+    spec_kwargs.setdefault("n_ue", _get_n_ue(cfg))
     spec_kwargs.setdefault("n_admm_max", n_admm_max)
     spec_obj = admm_spec(**spec_kwargs)
 
     scenario = build_scenario_from_seeds(
-        cfg, drop_seed=drop_seed, realization_seed=realization_seed,
+        cfg,
+        drop_seed=drop_seed,
+        realization_seed=realization_seed,
     )
 
-    # Forward only the params the ADMM solver knows about.
-    fwd_keys = ("gamma_u_db", "omega", "rho_admm", "kappa", "xi_slack",
-                "slack_tol", "n_admm_max", "eps_pri", "eps_dual",
-                "warm_start_from_split")
+    # Forward only the params the ADMM solver knows about.  Note:
+    # warm_start_from_split is intentionally NOT in this list because
+    # solve_cordis_admm does not accept it (Phase-I warm start is
+    # always done internally — see joint_opt.py).
+    fwd_keys = (
+        "gamma_u_db", "omega", "rho_admm", "kappa",
+        "xi_slack", "slack_tol",
+        "n_admm_max", "eps_pri", "eps_dual",
+        "n_snapshots", "verbose",
+    )
     admm_kwargs = {k: spec_obj.params[k]
                    for k in fwd_keys if k in spec_obj.params}
 
@@ -501,15 +570,28 @@ def run_fronthaul_table(
     """
     Compute per-AP fronthaul coordination overhead for each algorithm.
 
-    Centralized   : 2 × C^{M × |D|} (paper Table I baseline)
-    CORDIS-Split  : 4 × R¹ (M(a), α̃, Δ̃, ρ*)
-    CORDIS-ADMM   : R¹, R^|U| per outer iteration × T_ADMM
+    All sizes are journal-paper accurate:
 
-    T_ADMM is estimated by running ADMM for ``n_admm_drops`` drops and
-    averaging the ``iters`` diagnostic.
+    * **Centralized**: APs ship raw CSI and beamformers — H_a (M×N_ue
+      complex) and W_a (M×|D| complex) per coordination round.
+    * **CORDIS-Split** (Algorithm 1): each AP sends per-user scalars
+      ``{β̂_au, g̃_au, e_au^(s)}`` plus the sensing scalars ``z_a, q̃_a``,
+      then receives back ρ*_a.  Total per AP per round:
+      ``3·N_ue + 3`` real scalars.
+    * **CORDIS-ADMM** (Algorithm 2, Section V-C): each AP ships
+      ``l_au ∈ ℂ^(|D|+1)`` to the CPU for every user u, and receives
+      the broadcast residual ``Σ̃_u`` of the same structure.  The
+      ``l_au`` vector is mostly complex (CDS scalar, MUI vector,
+      S2CI vector) with one real entry (``e_au``), giving
+      ``2(N_ue+N_t) + 1`` real scalars per ``l_au``.  Per AP per
+      outer ADMM iteration, both directions combined:
+      ``2 · N_ue · (2|D| + 1)`` real scalars.
+
+    T_ADMM is estimated empirically by running ADMM for
+    ``n_admm_drops`` drops and averaging the ``iters`` diagnostic.
     """
     # 1. Estimate average ADMM iterations.
-    specs = [admm_spec()]
+    specs = [admm_spec(n_ue=_get_n_ue(cfg))]
     rc = _override_runner(runner_cfg,
                           n_drops=n_admm_drops,
                           n_realizations_per_drop=n_realizations)
@@ -521,36 +603,48 @@ def run_fronthaul_table(
         logger.warning("Could not extract 'iters' diagnostic; "
                        "leaving T_ADMM = NaN in table.")
 
-    # 2. Read scalar topology dimensions (best-effort).
-    M     = int(getattr(cfg.system,   "n_ant",     0))
+    # 2. Read scalar topology dimensions from the canonical cfg paths.
+    M     = int(getattr(cfg.topology, "n_ant",     0))
     n_ue  = int(getattr(cfg.topology, "n_ue",      0))
     n_tg  = int(getattr(cfg.topology, "n_targets", 0))
-    n_streams = n_ue + n_tg
+    n_streams = n_ue + n_tg                                   # = |D|
 
-    iters_nan = admm_avg_iters != admm_avg_iters  # NaN check
+    iters_nan = admm_avg_iters != admm_avg_iters              # NaN check
 
-    # 3. Build table rows.
+    # 3. Per-iteration real-scalar counts.
+    #    Centralized:    H_a (M×N_ue complex) + W_a (M×|D| complex)
+    centralized_count = 2 * (M * n_ue + M * n_streams)
+    #    Split:          β̂_au, g̃_au, e_au^(s) per user  +  z_a, q̃_a  +  ρ*_a
+    split_count       = 3 * n_ue + 3
+    #    ADMM:           upload l_au + download Σ̃_u, both ℂ^(|D|+1) with
+    #                    one real entry (e_au) → 2(N_ue+N_t)+1 real per vector
+    #                    × N_ue vectors × 2 directions × T_ADMM iterations
+    admm_real_per_iter_per_user = 2 * n_streams + 1
+    admm_per_iter               = 2 * n_ue * admm_real_per_iter_per_user
+    admm_total = (None if iters_nan
+                  else admm_per_iter * admm_avg_iters)
+
+    # 4. Build table rows (journal-paper notation throughout).
     table = {
         "Centralized": {
-            "data_to_share": r"$\mathbf{H}_a, \mathbf{W}_a$",
-            "size":          r"$2 \times \mathbb{C}^{M \times |\mathcal{D}|}$",
-            "real_scalars":  2 * 2 * M * n_streams,
-            "scales_with":   r"$M \cdot |\mathcal{D}|$",
+            "data_to_share": r"$\widehat{\mathbf{H}}_{a_t},\ \mathbf{W}_{a_t}$",
+            "size":          r"$\mathbb{C}^{M_t \times N_{\rm UE}} + \mathbb{C}^{M_t \times |\mathcal{D}|}$",
+            "real_scalars":  centralized_count,
+            "scales_with":   r"$M_t \cdot (N_{\rm UE} + |\mathcal{D}|)$",
             "scalable":      False,
         },
         "CORDIS-Split": {
-            "data_to_share": r"$\mathcal{M}(a), \tilde{\alpha}_a, \tilde{\Delta}_a, \rho^\ast_a$",
-            "size":          r"$4 \times \mathbb{R}^1$",
-            "real_scalars":  4,
-            "scales_with":   "constant",
+            "data_to_share": r"$\{\widehat{\beta}_{a_t u}, \widetilde{g}_{a_t u}, e_{a_t u}^{(s)}\}_{u \in \mathcal{U}},\ z_{a_t}, \widetilde{q}_{a_t},\ \rho^\ast_{a_t}$",
+            "size":          r"$(3 N_{\rm UE} + 3) \times \mathbb{R}$",
+            "real_scalars":  split_count,
+            "scales_with":   r"$N_{\rm UE}$",
             "scalable":      True,
         },
         "CORDIS-ADMM": {
-            "data_to_share": r"$\gamma^{[t]}, \boldsymbol{\psi}^{[t]}$",
-            "size":          r"$\mathbb{R}^1, \mathbb{R}^{|\mathcal{U}|}$",
-            "real_scalars":  (None if iters_nan
-                              else (1 + n_ue) * admm_avg_iters),
-            "scales_with":   r"$T_{\rm ADMM} \cdot (1 + |\mathcal{U}|)$",
+            "data_to_share": r"$\mathbf{l}_{a_t u}\ (\mathrm{up}),\ \widetilde{\boldsymbol{\Sigma}}_u\ (\mathrm{dn})$",
+            "size":          r"$2 \cdot N_{\rm UE} \cdot \mathbb{C}^{|\mathcal{D}|+1}$ per outer iter",
+            "real_scalars":  admm_total,
+            "scales_with":   r"$T_{\rm ADMM} \cdot N_{\rm UE} \cdot (2|\mathcal{D}| + 1)$",
             "scalable":      True,
         },
     }
@@ -561,6 +655,7 @@ def run_fronthaul_table(
         metadata={
             "M": M, "n_ue": n_ue, "n_targets": n_tg, "n_streams": n_streams,
             "admm_avg_iters": admm_avg_iters,
+            "admm_per_iter_real_scalars": admm_per_iter,
             "n_admm_drops": n_admm_drops,
             "n_realizations": n_realizations,
             "cfg_summary": _cfg_summary(cfg),
@@ -576,12 +671,13 @@ REGISTRY: Dict[str, Callable[..., ExperimentResult]] = {
     # Single-config CDFs
     "sinr_cdf":          run_sinr_cdf,
     "scnr_cdf":          run_scnr_cdf,
-    # Spec-factory sweeps
+    # Spec-factory sweep
     "gamma_sweep":       run_gamma_sweep,
-    "omega_sweep":       run_omega_sweep,
+    # Custom-loop sweep (cfg + spec)
     "kappa_sweep":       run_kappa_sweep,
     # Config-field sweeps
     "snr_sweep":         run_snr_sweep,
+    "clutter_cnr_sweep": run_clutter_cnr_sweep,
     "n_ue_sweep":        run_n_ue_sweep,
     "n_ap_sweep":        run_n_ap_sweep,
     "antennas_sweep":    run_antennas_sweep,
@@ -613,7 +709,7 @@ __all__ = [
     "get_experiment",
     # Direct exports of every run_* (handy for IDE auto-complete)
     "run_sinr_cdf", "run_scnr_cdf",
-    "run_gamma_sweep", "run_omega_sweep", "run_kappa_sweep",
+    "run_gamma_sweep", "run_kappa_sweep", "run_clutter_cnr_sweep",
     "run_snr_sweep", "run_n_ue_sweep", "run_n_ap_sweep",
     "run_antennas_sweep",
     "run_convergence_trace", "run_fronthaul_table",
