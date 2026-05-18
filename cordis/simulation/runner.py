@@ -45,6 +45,7 @@ import logging
 import platform
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
@@ -58,6 +59,184 @@ from cordis.simulation.scenario import (
 from cordis.utils.config import CORDISConfig
 
 logger = logging.getLogger("cordis." + __name__)
+
+
+# =============================================================================
+#  Progress-bar helpers
+# =============================================================================
+
+# =============================================================================
+#  Progress-bar helpers
+# =============================================================================
+#
+# Architecture (per-trial granularity):
+#
+#   • The Parallel work unit is still "one drop with all its realizations"
+#     (preserves the build_drop optimisation — we only build each drop once).
+#   • We create a shared counter via ``multiprocessing.Manager``.
+#   • That counter is passed to every worker as a kwarg of ``_run_one_drop``.
+#   • Workers increment the counter after EACH realization finishes, mid-drop.
+#   • A background polling thread on the parent side reads the counter
+#     ~10× per second and advances the tqdm bar.
+#
+# This gives genuine per-trial bar updates without restructuring the
+# parallelism.  Counter increments are not strictly atomic across
+# workers, but the worst case is one missed tick per concurrent
+# increment — negligible at the granularity we care about, and the
+# campaign-level total is computed independently in the report.
+
+
+@contextmanager
+def _nullcontext():
+    yield None
+
+
+def _make_progress_context(rc: "RunnerConfig"):
+    """
+    Pick the right progress context for a campaign.
+
+    Returns a triple::
+
+        (context_manager, joblib_verbose_override, progress_counter)
+
+    ``progress_counter`` is a multiprocessing-shared counter (or ``None``).
+    Workers call ``counter.value += 1`` after each realization completes;
+    a polling thread on the parent advances tqdm from that counter.
+
+    Three fallback tiers:
+
+    1. ``rc.progress`` False, or stderr is not a TTY → no progress display.
+    2. ``tqdm`` installed → counter-driven per-trial bar.
+    3. ``tqdm`` missing → joblib's own ``verbose=10`` line output (no per-trial
+       granularity, but at least *something*).
+    """
+    if not rc.progress or not sys.stderr.isatty():
+        return _nullcontext(), rc.verbose, None
+
+    try:
+        from tqdm.auto import tqdm
+    except ImportError:
+        logger.info("tqdm not installed — falling back to joblib verbose=10. "
+                    "Install with `pip install tqdm` for a per-trial bar.")
+        return _nullcontext(), max(10, rc.verbose), None
+
+    import multiprocessing
+    import threading
+    import time as _time
+
+    bar = tqdm(
+        total=rc.n_trials,
+        desc=f"trials ({rc.n_drops}d × {rc.n_realizations_per_drop}r)",
+        unit="trial",
+        leave=True,
+    )
+
+    # Shared counter — Manager proxies pickle cleanly across spawn/fork.
+    # The lock makes ``counter.value += 1`` atomic across workers
+    # (a Manager.Value alone is racy on read-modify-write, which loses
+    # ~20-30% of ticks under contention).  Creation spawns one extra
+    # (small, idle) Python process; freed when the with-block exits.
+    manager = multiprocessing.Manager()
+    counter = manager.Value("i", 0)
+    counter_lock = manager.Lock()
+
+    stop_event = threading.Event()
+
+    def _poll():
+        last = 0
+        while not stop_event.wait(0.1):
+            try:
+                current = counter.value
+            except Exception:
+                continue   # manager momentarily unreachable; try again
+            if current > last:
+                bar.update(current - last)
+                last = current
+        # Final flush after the workers are done.
+        try:
+            current = counter.value
+            if current > last:
+                bar.update(current - last)
+        except Exception:
+            pass
+
+    @contextmanager
+    def _ctx():
+        thread = threading.Thread(target=_poll, name="tqdm-poller", daemon=True)
+        thread.start()
+        try:
+            yield (counter, counter_lock)
+        finally:
+            stop_event.set()
+            thread.join(timeout=2.0)
+            bar.close()
+            # The Manager process is shut down when `manager` is garbage
+            # collected; leaving the with-block drops the last reference.
+
+    return _ctx(), 0, (counter, counter_lock)
+
+
+# ─── Worker-side logging suppression ────────────────────────────────────
+#
+# joblib workers run in fresh processes (spawn on macOS, fork on Linux).
+# They never see the parent's `setup_logging`, so when worker code calls
+# `logger.warning(...)`, Python's default lastResort handler kicks in
+# and dumps the bare message to stderr without any level prefix.  That's
+# what produces lines like
+#
+#     CVXPY inner solve [SCS] status=infeasible — returning previous W
+#     β̂ has negative real parts — applying phase alignment
+#
+# during a parallel campaign.  These are diagnostic messages for known
+# difficult conditions, not actionable per-trial.
+#
+# We install a worker-side handler that filters out WARNINGs from
+# ``cordis.algorithms.*`` / ``cordis.channel.*`` (the modules that emit
+# these per-trial diagnostics) but still surfaces genuine ERRORs and
+# WARNINGs from other modules.  Users who need full algorithm-internal
+# logging should run with ``--n-workers 1`` (everything in the parent
+# process, full logging chain configured) plus ``--show-algorithm-warnings``.
+
+_WORKER_LOG_INIT_DONE = False
+
+_WORKER_SUPPRESS_PREFIXES = (
+    "cordis.algorithms.",
+    "cordis.channel.",
+)
+
+
+class _WorkerDiagnosticFilter(logging.Filter):
+    """Drop WARNING-level diagnostic chatter from per-trial algorithm code."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.ERROR:
+            return True  # never silence real errors
+        if any(record.name.startswith(p) for p in _WORKER_SUPPRESS_PREFIXES):
+            return False
+        return True
+
+
+def _ensure_worker_log_quiet() -> None:
+    """Install a filtering stderr handler in worker processes on first call.
+
+    Idempotent.  Only acts if no real handlers are attached to the root
+    logger (i.e. we're in a fresh worker process, not a single-process
+    run where the parent already configured logging).
+    """
+    global _WORKER_LOG_INIT_DONE
+    if _WORKER_LOG_INIT_DONE:
+        return
+    root = logging.getLogger()
+    has_real_handlers = any(
+        not isinstance(h, logging.NullHandler) for h in root.handlers
+    )
+    if not has_real_handlers:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setLevel(logging.WARNING)
+        handler.setFormatter(logging.Formatter("%(levelname)-7s %(message)s"))
+        handler.addFilter(_WorkerDiagnosticFilter())
+        root.addHandler(handler)
+    _WORKER_LOG_INIT_DONE = True
 
 
 # =============================================================================
@@ -93,6 +272,11 @@ class RunnerConfig:
     verbose : int
         joblib verbosity (0 = silent, 1 = progress every few tasks,
         10+ = detail per task).
+    progress : bool
+        If True (default), show a per-drop progress bar on the console.
+        Uses ``tqdm`` if installed; falls back to joblib's verbose=10
+        line output otherwise.  Auto-disabled when stderr is not a TTY
+        (e.g. on SLURM, in CI) so log files stay clean.
     skip_failures : bool
         If True, a failing algorithm on a given trial emits a
         ``failed=True`` TrialOutput rather than killing the campaign.
@@ -104,6 +288,7 @@ class RunnerConfig:
     n_workers:               int  = -1
     backend:                 str  = "loky"
     verbose:                 int  = 1
+    progress:                bool = True
     skip_failures:           bool = True
 
     @property
@@ -223,10 +408,19 @@ def _run_one_drop(
     realization_seed_seqs: List[SeedSequence],
     drop_idx:              int,
     skip_failures:         bool,
+    progress_counter:      Optional[Any] = None,
 ) -> List[TrialOutput]:
     """
     Worker entry point: build one Drop and run every algorithm on every
     realisation under it.
+
+    ``progress_counter``, if provided, is a ``(value_proxy, lock_proxy)``
+    pair from ``multiprocessing.Manager``.  The runner increments the
+    value (under the lock, for atomicity across workers) once per
+    realization so the parent's tqdm bar can advance per trial rather
+    than per drop.  Increments happen on the success path, the
+    scenario-build failure path, AND the drop-build failure path, so
+    the bar always reaches its declared total of ``n_drops × n_realizations``.
 
     Failure handling
     ----------------
@@ -248,6 +442,25 @@ def _run_one_drop(
     ``default_rng(integer)``) and keeps the runner's traceability fields
     in lock-step with scenario.py's own seed bookkeeping.
     """
+    # Suppress lastResort StreamHandler in worker processes.  Idempotent,
+    # ~free after the first call.  See _ensure_worker_log_quiet docstring.
+    _ensure_worker_log_quiet()
+
+    # ── Progress-counter helper ───────────────────────────────────────
+    # Called after every realization completes (any path).  Survives all
+    # transient errors (manager unreachable, counter pickling glitches);
+    # a missed tick is cosmetic, not a correctness issue.  ``progress_counter``
+    # is a ``(value_proxy, lock_proxy)`` pair; the lock makes the read-modify-
+    # write atomic across workers.
+    def _tick():
+        if progress_counter is None:
+            return
+        try:
+            counter_val, counter_lock = progress_counter
+            with counter_lock:
+                counter_val.value += 1
+        except Exception:
+            pass
 
     # ── Drop construction ──────────────────────────────────────────────
     try:
@@ -263,6 +476,9 @@ def _run_one_drop(
             int(rss.generate_state(1, dtype=np.uint64)[0])
             for rss in realization_seed_seqs
         ]
+        # Tick once per realization so the bar still completes.
+        for _ in realization_seed_seqs:
+            _tick()
         return [
             _failed_output(
                 spec.name, drop_idx, r_idx,
@@ -293,6 +509,7 @@ def _run_one_drop(
                 )
                 for spec in algorithm_specs
             )
+            _tick()
             continue
 
         outputs.extend(
@@ -301,6 +518,7 @@ def _run_one_drop(
                 skip_failures=skip_failures,
             )
         )
+        _tick()
 
     return outputs
 
@@ -420,19 +638,23 @@ class MonteCarloRunner:
         t_start_perf = time.perf_counter()
         t_start_iso  = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-        # Parallelise over drops
-        per_drop_outputs: List[List[TrialOutput]] = Parallel(
-            n_jobs=rc.n_workers,
-            backend=rc.backend,
-            verbose=rc.verbose,
-        )(
-            delayed(_run_one_drop)(
-                self.cfg, self.algorithm_specs,
-                drop_seqs[d], realization_seqs[d], d,
-                rc.skip_failures,
+        # Parallelise over drops, with optional per-trial tqdm bar.
+        progress_ctx, joblib_verbose, progress_counter = \
+            _make_progress_context(rc)
+        with progress_ctx:
+            per_drop_outputs: List[List[TrialOutput]] = Parallel(
+                n_jobs=rc.n_workers,
+                backend=rc.backend,
+                verbose=joblib_verbose,
+            )(
+                delayed(_run_one_drop)(
+                    self.cfg, self.algorithm_specs,
+                    drop_seqs[d], realization_seqs[d], d,
+                    rc.skip_failures,
+                    progress_counter=progress_counter,
+                )
+                for d in range(rc.n_drops)
             )
-            for d in range(rc.n_drops)
-        )
 
         # Flatten
         outputs: List[TrialOutput] = [

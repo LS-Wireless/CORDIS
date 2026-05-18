@@ -95,6 +95,13 @@ def build_base_parser(experiment_name: str) -> argparse.ArgumentParser:
                         "subdirectories are created.")
     p.add_argument("--verbose", "-v", action="count", default=0,
                    help="Increase log verbosity (use -vv for DEBUG).")
+    p.add_argument("--no-progress", action="store_true",
+                   help="Disable the per-drop progress bar on stderr "
+                        "(also auto-off when stderr is not a TTY).")
+    p.add_argument("--show-algorithm-warnings", action="store_true",
+                   help="Show per-trial WARNING messages from "
+                        "cordis.algorithms.* on console. Default is to "
+                        "suppress them (they always go to the log file).")
     return p
 
 
@@ -134,12 +141,44 @@ def parse_value_list(s: str, kind: type = float) -> List:
 # Logging
 # ─────────────────────────────────────────────────────────────────────
 
-def setup_logging(log_path: Path, verbosity: int = 0) -> None:
+class _AlgorithmConsoleFilter(logging.Filter):
+    """
+    Drop diagnostic WARNING-level messages from per-trial algorithm /
+    channel code on the *console* handler.
+
+    These warnings (e.g. "CVXPY status=infeasible — returning previous W",
+    "β̂ has negative real parts") are expected behavior under known
+    difficult conditions and not actionable per-trial.  They still go to
+    the file log (which is DEBUG-level) for postmortem review.
+    Pass ``--show-algorithm-warnings`` to re-enable on console.
+
+    Loggers under these prefixes are filtered:
+        - cordis.algorithms.*  (CVXPY infeasible, SCA fallback, etc.)
+        - cordis.channel.*     (β̂ phase alignment, etc.)
+
+    Real errors (level >= ERROR) are always surfaced.
+    """
+    _SUPPRESS_PREFIXES = ("cordis.algorithms.", "cordis.channel.")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.ERROR:
+            return True
+        if any(record.name.startswith(p) for p in self._SUPPRESS_PREFIXES):
+            return False
+        return True
+
+
+def setup_logging(log_path: Path, verbosity: int = 0,
+                  quiet_algorithms: bool = True) -> None:
     """File + console logging under ``log_path``.
 
     ``verbosity`` follows -v convention: 0 → INFO console, 1 → DEBUG
     console, 2+ → DEBUG console + DEBUG everywhere.  File log is
     always DEBUG (it's the durable record).
+
+    ``quiet_algorithms`` (default True) suppresses per-trial WARNING
+    messages from ``cordis.algorithms.*`` on the console; they still
+    go to the file log.  Disable with ``--show-algorithm-warnings``.
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -161,6 +200,8 @@ def setup_logging(log_path: Path, verbosity: int = 0) -> None:
     console_h = logging.StreamHandler(sys.stderr)
     console_h.setLevel(logging.DEBUG if verbosity >= 1 else logging.INFO)
     console_h.setFormatter(logging.Formatter("%(levelname)-7s %(message)s"))
+    if quiet_algorithms:
+        console_h.addFilter(_AlgorithmConsoleFilter())
     root.addHandler(console_h)
 
     # Even in verbose mode, mute matplotlib's font scanner — it's noisy
@@ -207,7 +248,10 @@ def run_experiment(experiment_name: str,
     exp_dir = cordis["experiment_dir"](experiment_name,
                                        root=args.output_root)
     log_path = cordis["log_dir"](exp_dir) / "run.log"
-    setup_logging(log_path, verbosity=args.verbose)
+    setup_logging(log_path, verbosity=args.verbose,
+                  quiet_algorithms=not getattr(args,
+                                               "show_algorithm_warnings",
+                                               False))
 
     log = logging.getLogger(f"exp.{experiment_name}")
     log.info("=" * 70)
@@ -230,10 +274,13 @@ def run_experiment(experiment_name: str,
         n_realizations_per_drop=n_real,
         n_workers=args.n_workers,
         verbose=1 if args.verbose >= 1 else 0,
+        progress=not getattr(args, "no_progress", False),
         base_seed=args.seed,
     )
-    log.info("RunnerConfig: n_drops=%d n_real=%d n_workers=%d seed=%d",
-             n_drops, n_real, args.n_workers, args.seed)
+    log.info("RunnerConfig: n_drops=%d n_real=%d n_workers=%d seed=%d "
+             "progress=%s",
+             n_drops, n_real, args.n_workers, args.seed,
+             runner_cfg.progress)
 
     # Dispatch.
     fn = cordis["REGISTRY"][experiment_name]

@@ -164,7 +164,7 @@ figures/topology/
 # collaborators, commit it explicitly:
 #   git add -f configs/exp_important.json
 
-configs/exp_*.json
+#configs/exp_*.json
 configs/mmwave/
 configs/local/
 
