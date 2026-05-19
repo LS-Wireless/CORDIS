@@ -158,14 +158,27 @@ def test_06_config_bash_syntax():
 #  Tier 3 — .sub file contract
 # ─────────────────────────────────────────────────────────────────────────────
 
-@_register("Test  7: every .sub sources _config.sh")
+@_register("Test  7: every .sub sources _config.sh via SLURM_SUBMIT_DIR")
 def test_07_sub_sources_config():
+    """sbatch COPIES the script to a spool dir before running, so
+    BASH_SOURCE[0] alone resolves to the spool path — _config.sh
+    won't be there.  The correct pattern is to use SLURM_SUBMIT_DIR
+    (with BASH_SOURCE fallback for direct invocation)."""
     for name in EXPERIMENTS:
         p = UCI_DIR / f"exp_{name}.sub"
         txt = p.read_text()
         assert 'source "$SCRIPT_DIR/_config.sh"' in txt, (
-            f"{p.name}: should `source` _config.sh after resolving "
-            f"SCRIPT_DIR (so personal/site settings load correctly)"
+            f"{p.name}: should `source` _config.sh"
+        )
+        # The KEY assertion: SLURM_SUBMIT_DIR must be consulted
+        # before falling back to BASH_SOURCE.
+        assert "SLURM_SUBMIT_DIR" in txt, (
+            f"{p.name}: must reference SLURM_SUBMIT_DIR when locating "
+            f"_config.sh.  Pure BASH_SOURCE-based path resolution "
+            f"FAILS under sbatch because SLURM copies the script to a "
+            f"spool directory (e.g. /export/spool/slurm/slurmd.spool/"
+            f"jobNNNNN/) before executing it, so dirname BASH_SOURCE[0] "
+            f"points to that spool dir and _config.sh isn't there."
         )
 
 

@@ -36,9 +36,18 @@
 set -euo pipefail
 
 # ── 1. Source shared cluster + personal settings ─────────────────────
-# Resolve the path of this script so _config.sh is found regardless of
-# the submitter's cwd.
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# When run via sbatch, SLURM COPIES the script to its spool directory
+# before execution, so ${BASH_SOURCE[0]} resolves to the spool path,
+# not the .sub file's original location.  Use SLURM_SUBMIT_DIR (the
+# directory from which `sbatch` was invoked, normally the repo root)
+# to find _config.sh.  Fall back to BASH_SOURCE-based resolution for
+# direct invocation outside SLURM (e.g. `bash exp_antennas_sweep.sub` for
+# local debugging).
+if [ -n "${SLURM_SUBMIT_DIR:-}" ]; then
+    SCRIPT_DIR="$SLURM_SUBMIT_DIR/scripts/slurm/uci-hpc3"
+else
+    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+fi
 # shellcheck source=_config.sh
 source "$SCRIPT_DIR/_config.sh"
 
