@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import logging
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Union
@@ -127,6 +128,26 @@ def save_figure(
     """
     base_path = Path(base_path)
     base_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Graceful fallback for PGF on systems without a LaTeX install
+    # (e.g. compute nodes without texlive).  matplotlib's PGF backend
+    # invokes pdflatex during savefig to lay out text, so the format
+    # genuinely requires a TeX install — there is no mathtext fallback
+    # like for PDF/PNG.  Rather than failing the entire save, we drop
+    # PGF from the requested formats and emit a single warning.
+    formats = list(formats)
+    if "pgf" in formats and shutil.which("pdflatex") is None:
+        logger.warning(
+            "pdflatex not on PATH — skipping .pgf output for %s.  "
+            "Other formats (pdf/png/svg) save normally.  Install "
+            "TeX Live (or `module load texlive` on HPC clusters) to "
+            "enable .pgf output.", base_path.name,
+        )
+        formats = [f for f in formats if f != "pgf"]
+        if not formats:
+            logger.error("No formats remaining after dropping pgf; "
+                         "nothing to save for %s.", base_path)
+            return []
 
     now = _dt.datetime.now()
     sha = _git_sha(short=True)
