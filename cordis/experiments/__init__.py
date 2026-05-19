@@ -73,6 +73,7 @@ from cordis.experiments.registry import (
     REGISTRY,
     list_experiments,
     get_experiment,
+    list_spec_sets,
     # convenience direct exports
     run_sinr_cdf, run_scnr_cdf,
     run_gamma_sweep, run_kappa_sweep, run_clutter_cnr_sweep,
@@ -100,7 +101,7 @@ __all__ = [
     # sweeps
     "SweepAxis", "sweep_config_field", "sweep_spec_factory",
     # registry
-    "REGISTRY", "list_experiments", "get_experiment",
+    "REGISTRY", "list_experiments", "get_experiment", "list_spec_sets",
     "run_sinr_cdf", "run_scnr_cdf",
     "run_gamma_sweep", "run_kappa_sweep", "run_clutter_cnr_sweep",
     "run_snr_sweep", "run_n_ue_sweep", "run_n_ap_sweep",

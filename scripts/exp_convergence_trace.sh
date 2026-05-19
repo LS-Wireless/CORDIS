@@ -32,6 +32,12 @@ N_TRIALS="${N_TRIALS:-}"
 N_WORKERS="${N_WORKERS:--1}"          # -1 = all cores; 1 = sequential
 SEED="${SEED:-42}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-results}"
+# Algorithm selection — leave empty to use the per-experiment default
+# (sinr_cdf/scnr_cdf → all_algorithms; gamma/kappa/clutter sweeps →
+# cordis_vs_centralized; antennas_sweep → cordis_vs_benchmarks).  Set
+# to one of: cordis_only, cordis_vs_centralized, cordis_vs_benchmarks,
+# all_algorithms — to override.
+SPECS="${SPECS:-}"
 DROP_SEED="${DROP_SEED:-42}"
 REALIZATION_SEED="${REALIZATION_SEED:-43}"
 N_ADMM_MAX="${N_ADMM_MAX:-80}"
@@ -47,10 +53,15 @@ TRIAL_ARGS=()
 [ -n "$N_REAL"   ] && TRIAL_ARGS+=(--n-realizations "$N_REAL")
 [ -n "$N_TRIALS" ] && TRIAL_ARGS+=(--n-trials      "$N_TRIALS")
 
+# Conditionally include --specs.  Empty means "use per-experiment default".
+SPEC_ARGS=()
+[ -n "$SPECS" ] && SPEC_ARGS+=(--specs "$SPECS")
+
 python3 scripts/exp_convergence_trace.py \
     --base-config   "$BASE_CONFIG"   \
     $EXP_CONFIG_FLAG                 \
     "${TRIAL_ARGS[@]}"             \
+    "${SPEC_ARGS[@]}"              \
     --n-workers     "$N_WORKERS"     \
     --seed          "$SEED"          \
     --output-root   "$OUTPUT_ROOT"   \

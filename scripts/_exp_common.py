@@ -141,6 +141,13 @@ def add_drops_args(parser: argparse.ArgumentParser,
                         help="Total trial count.  Decomposed into drops × "
                              "realizations using the two closest factors.  "
                              "Falls back to cfg.simulation.n_trials.")
+    # --specs is universally available; run_experiment silently skips it
+    # for functions whose signature doesn't include spec_set (e.g.
+    # run_convergence_trace, run_fronthaul_table).  Default is None so
+    # each run_* function's own historical default applies (gamma_sweep
+    # → cordis_vs_centralized, antennas_sweep → cordis_vs_benchmarks,
+    # everything else → all_algorithms).
+    add_specs_arg(parser, default=None)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -218,17 +225,51 @@ def resolve_drops_real(args: argparse.Namespace,
     )
 
 
+def add_specs_arg(parser: argparse.ArgumentParser,
+                  default: Optional[str] = None) -> None:
+    """
+    Add the ``--specs`` CLI flag for selecting which spec set to run.
+
+    Default is ``None`` — meaning "don't override, use the run_*
+    function's own historical default" (which differs per experiment:
+    sinr_cdf/scnr_cdf default to ``all_algorithms``, gamma/kappa/clutter
+    sweeps default to ``cordis_vs_centralized``, antennas_sweep
+    defaults to ``cordis_vs_benchmarks``).  Pass an explicit name to
+    override.
+
+    See :func:`cordis.experiments.registry._resolve_spec_set` for the
+    runtime lookup.
+    """
+    try:
+        from cordis.experiments import list_spec_sets
+        choices = list_spec_sets()
+    except Exception:
+        choices = ["cordis_only", "cordis_vs_centralized",
+                   "cordis_vs_benchmarks", "all_algorithms"]
+    parser.add_argument(
+        "--specs", type=str, default=default, choices=choices,
+        metavar="SPECS",
+        help=("Which named spec set to run.  When omitted, the "
+              "experiment's own default applies.  Available: "
+              + ", ".join(choices) + "."),
+    )
+
+
 def add_cdf_args(parser: argparse.ArgumentParser,
-                 default_n_drops: int = 50,
-                 default_n_real: int = 4) -> None:
-    """Alias of :func:`add_drops_args` with CDF-appropriate defaults."""
+                 default_n_drops: Optional[int] = None,
+                 default_n_real: Optional[int] = None) -> None:
+    """CDF-experiment argument bundle (trial counts + ``--specs``).
+
+    ``--specs`` is registered via :func:`add_drops_args`; this helper
+    exists so per-experiment scripts can document CDF-specific intent.
+    """
     add_drops_args(parser, default_n_drops, default_n_real)
 
 
 def add_sweep_args(parser: argparse.ArgumentParser,
-                   default_n_drops: int = 20,
-                   default_n_real: int = 2) -> None:
-    """Alias of :func:`add_drops_args` with sweep-appropriate defaults."""
+                   default_n_drops: Optional[int] = None,
+                   default_n_real: Optional[int] = None) -> None:
+    """Sweep-experiment argument bundle (trial counts + ``--specs``)."""
     add_drops_args(parser, default_n_drops, default_n_real)
 
 
@@ -392,6 +433,21 @@ def run_experiment(experiment_name: str,
     # there is one source of truth.
     experiment_kwargs["n_drops"]        = n_drops
     experiment_kwargs["n_realizations"] = n_real
+
+    # Forward --specs IFF the experiment's run_* function accepts it.
+    # convergence_trace and fronthaul_table don't take a spec_set kwarg
+    # (their algorithm choice is fixed by design), so we silently skip
+    # them rather than crash on a TypeError.
+    if hasattr(args, "specs") and args.specs is not None:
+        import inspect as _inspect
+        fn = cordis["REGISTRY"][experiment_name]
+        sig = _inspect.signature(fn)
+        if "spec_set" in sig.parameters:
+            experiment_kwargs["spec_set"] = args.specs
+            log.info("spec_set=%s", args.specs)
+        else:
+            log.info("--specs ignored for %s (fixed algorithm set)",
+                     experiment_name)
 
     runner_cfg = cordis["RunnerConfig"](
         n_drops=n_drops,

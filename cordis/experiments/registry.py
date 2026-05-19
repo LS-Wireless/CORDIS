@@ -72,6 +72,7 @@ from cordis.experiments.result import ExperimentResult
 from cordis.experiments.specs import (
     admm_spec,
     all_algorithms,
+    cordis_only,
     cordis_vs_benchmarks,
     cordis_vs_centralized,
 )
@@ -82,6 +83,36 @@ from cordis.experiments.sweeps import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  Named spec sets (Stage 10)
+#
+#  Every run_* function that constructs a list of algorithms looks up
+#  its spec factory here.  Pass `spec_set=<name>` (kwarg) or
+#  `--specs <name>` (CLI) to choose a subset.  Add a new named set by
+#  registering its factory below — no other code change needed.
+# ─────────────────────────────────────────────────────────────────────
+_SPEC_SETS = {
+    "cordis_only":           cordis_only,            # Split + ADMM
+    "cordis_vs_centralized": cordis_vs_centralized,  # + Centralized
+    "cordis_vs_benchmarks":  cordis_vs_benchmarks,   # Split/ADMM + 4 benchmarks
+    "all_algorithms":        all_algorithms,         # all 9 (default)
+}
+
+
+def _resolve_spec_set(name: str):
+    """Look up a named spec factory; raise ValueError on unknown names."""
+    if name not in _SPEC_SETS:
+        raise ValueError(
+            f"unknown spec_set {name!r}; available: {sorted(_SPEC_SETS)}"
+        )
+    return _SPEC_SETS[name]
+
+
+def list_spec_sets() -> list:
+    """Public accessor for the four named spec sets (e.g., for CLI choices)."""
+    return list(_SPEC_SETS)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -165,11 +196,13 @@ def run_sinr_cdf(
     n_drops: int = 50,
     n_realizations: int = 4,
     spec_kwargs: Optional[Dict[str, Any]] = None,
+    spec_set: str = "all_algorithms",
 ) -> ExperimentResult:
     """Empirical CDF of min-SINR across N_drops × N_realisations trials."""
+    factory = _resolve_spec_set(spec_set)
     spec_kwargs = spec_kwargs or {}
     spec_kwargs.setdefault("n_ue", _get_n_ue(cfg))
-    specs = all_algorithms(**spec_kwargs)
+    specs = factory(**spec_kwargs)
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
@@ -181,7 +214,7 @@ def run_sinr_cdf(
         metadata={
             "n_drops": n_drops,
             "n_realizations": n_realizations,
-            "spec_set": "all_algorithms",
+            "spec_set": spec_set,
             "cfg_summary": _cfg_summary(cfg),
         },
     )
@@ -193,11 +226,13 @@ def run_scnr_cdf(
     n_drops: int = 50,
     n_realizations: int = 4,
     spec_kwargs: Optional[Dict[str, Any]] = None,
+    spec_set: str = "all_algorithms",
 ) -> ExperimentResult:
     """Empirical CDF of sum-SCNR (sensing figure-of-merit)."""
+    factory = _resolve_spec_set(spec_set)
     spec_kwargs = spec_kwargs or {}
     spec_kwargs.setdefault("n_ue", _get_n_ue(cfg))
-    specs = all_algorithms(**spec_kwargs)
+    specs = factory(**spec_kwargs)
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
@@ -209,7 +244,7 @@ def run_scnr_cdf(
         metadata={
             "n_drops": n_drops,
             "n_realizations": n_realizations,
-            "spec_set": "all_algorithms",
+            "spec_set": spec_set,
             "cfg_summary": _cfg_summary(cfg),
         },
     )
@@ -225,8 +260,10 @@ def run_gamma_sweep(
     gamma_values: Optional[List[float]] = None,
     n_drops: int = 20,
     n_realizations: int = 2,
+    spec_set: str = "cordis_vs_centralized",
 ) -> ExperimentResult:
     """Sweep per-UE SINR target γ ∈ {-3, 0, 3, 6, 10, 14, 18} dB."""
+    factory = _resolve_spec_set(spec_set)
     if gamma_values is None:
         gamma_values = [-3.0, 0.0, 3.0, 6.0, 10.0, 14.0, 18.0]
     axis = SweepAxis(
@@ -239,14 +276,14 @@ def run_gamma_sweep(
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
     results = sweep_spec_factory(
-        cfg, cordis_vs_centralized, "gamma_u_db", axis, rc,
+        cfg, factory, "gamma_u_db", axis, rc,
         n_ue=_get_n_ue(cfg),
     )
     return ExperimentResult(
         name="gamma_sweep", kind="sweep",
         sweep_results=results, sweep_axis=axis,
         metadata={"n_drops": n_drops, "n_realizations": n_realizations,
-                  "spec_set": "cordis_vs_centralized",
+                  "spec_set": spec_set,
                   "cfg_summary": _cfg_summary(cfg)},
     )
 
@@ -262,6 +299,7 @@ def run_kappa_sweep(
     kappa_values: Optional[List[float]] = None,
     n_drops: int = 20,
     n_realizations: int = 2,
+    spec_set: str = "cordis_vs_centralized",
 ) -> ExperimentResult:
     """Sweep prox-regularisation weight κ ∈ [0, 2].
 
@@ -275,6 +313,7 @@ def run_kappa_sweep(
         ``solve_cordis_admm`` (the Stage-7 gap is that this isn't
         derived from cfg).
     """
+    factory = _resolve_spec_set(spec_set)
     if kappa_values is None:
         kappa_values = [0.0, 0.1, 0.5, 1.0, 1.5, 2.0]
     axis = SweepAxis(
@@ -290,7 +329,7 @@ def run_kappa_sweep(
     results: Dict[float, Any] = {}
     for k in axis.values:
         cfg_v = _override_cfg(cfg, **{"algorithm.admm.kappa": float(k)})
-        specs = cordis_vs_centralized(n_ue=n_ue, kappa=float(k))
+        specs = factory(n_ue=n_ue, kappa=float(k))
         sr = _run_single(cfg_v, rc, specs)
         results[float(k)] = sr
 
@@ -298,7 +337,7 @@ def run_kappa_sweep(
         name="kappa_sweep", kind="sweep",
         sweep_results=results, sweep_axis=axis,
         metadata={"n_drops": n_drops, "n_realizations": n_realizations,
-                  "spec_set": "cordis_vs_centralized",
+                  "spec_set": spec_set,
                   "cfg_summary": _cfg_summary(cfg)},
     )
 
@@ -314,8 +353,10 @@ def run_snr_sweep(
     n_drops: int = 20,
     n_realizations: int = 2,
     field_path: str = "channel.snr_db",
+    spec_set: str = "all_algorithms",
 ) -> ExperimentResult:
     """Sweep operating SNR (Pₘₐₓ / σ²) [dB]."""
+    factory = _resolve_spec_set(spec_set)
     if snr_values_db is None:
         snr_values_db = [-10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0]
     axis = SweepAxis(
@@ -324,7 +365,7 @@ def run_snr_sweep(
         display="SNR [dB]",
         unit="dB",
     )
-    specs = all_algorithms(n_ue=_get_n_ue(cfg))
+    specs = factory(n_ue=_get_n_ue(cfg))
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
@@ -334,7 +375,7 @@ def run_snr_sweep(
         sweep_results=results, sweep_axis=axis,
         metadata={"n_drops": n_drops, "n_realizations": n_realizations,
                   "field_path": field_path,
-                  "spec_set": "all_algorithms",
+                  "spec_set": spec_set,
                   "cfg_summary": _cfg_summary(cfg)},
     )
 
@@ -346,6 +387,7 @@ def run_clutter_cnr_sweep(
     n_drops: int = 20,
     n_realizations: int = 2,
     field_path: str = "sensing.clutter_cnr_db",
+    spec_set: str = "cordis_vs_centralized",
 ) -> ExperimentResult:
     """Sweep clutter-to-noise ratio (CNR) in dB.
 
@@ -356,6 +398,7 @@ def run_clutter_cnr_sweep(
     A natural fixed-κ way to probe the journal-paper formulation,
     which has no λ-style scalar comm/sensing trade-off.
     """
+    factory = _resolve_spec_set(spec_set)
     if cnr_values_db is None:
         cnr_values_db = [-20.0, -15.0, -10.0, -5.0, 0.0, 5.0]
     axis = SweepAxis(
@@ -364,7 +407,7 @@ def run_clutter_cnr_sweep(
         display="Clutter CNR [dB]",
         unit="dB",
     )
-    specs = cordis_vs_centralized(n_ue=_get_n_ue(cfg))
+    specs = factory(n_ue=_get_n_ue(cfg))
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
@@ -374,7 +417,7 @@ def run_clutter_cnr_sweep(
         sweep_results=results, sweep_axis=axis,
         metadata={"n_drops": n_drops, "n_realizations": n_realizations,
                   "field_path": field_path,
-                  "spec_set": "cordis_vs_centralized",
+                  "spec_set": spec_set,
                   "cfg_summary": _cfg_summary(cfg)},
     )
 
@@ -386,12 +429,14 @@ def run_n_ue_sweep(
     n_drops: int = 20,
     n_realizations: int = 2,
     field_path: str = "topology.n_ue",
+    spec_set: str = "all_algorithms",
 ) -> ExperimentResult:
     """Sweep number of UEs (loading / scalability).
 
     Custom inner loop because n_ue affects the size of ``gamma_u_db``,
     so specs must be rebuilt per sweep point.
     """
+    factory = _resolve_spec_set(spec_set)
     if n_ue_values is None:
         n_ue_values = [2, 4, 6, 8, 10]
     axis = SweepAxis(
@@ -406,14 +451,14 @@ def run_n_ue_sweep(
     for n_ue in axis.values:
         n_ue_int = int(n_ue)
         cfg_v = _override_cfg(cfg, **{field_path: n_ue_int})
-        specs = all_algorithms(n_ue=n_ue_int)
+        specs = factory(n_ue=n_ue_int)
         sr = _run_single(cfg_v, rc, specs)
         results[float(n_ue)] = sr
     return ExperimentResult(
         name="n_ue_sweep", kind="sweep",
         sweep_results=results, sweep_axis=axis,
         metadata={"n_drops": n_drops, "n_realizations": n_realizations,
-                  "spec_set": "all_algorithms",
+                  "spec_set": spec_set,
                   "field_path": field_path,
                   "cfg_summary": _cfg_summary(cfg)},
     )
@@ -426,8 +471,10 @@ def run_n_ap_sweep(
     n_drops: int = 20,
     n_realizations: int = 2,
     field_path: str = "topology.n_ap",
+    spec_set: str = "all_algorithms",
 ) -> ExperimentResult:
     """Sweep number of APs (AP scalability)."""
+    factory = _resolve_spec_set(spec_set)
     if n_ap_values is None:
         n_ap_values = [4, 6, 8, 10, 12]
     axis = SweepAxis(
@@ -435,7 +482,7 @@ def run_n_ap_sweep(
         values=[float(v) for v in n_ap_values],
         display=r"$N_{\rm AP}$",
     )
-    specs = all_algorithms(n_ue=_get_n_ue(cfg))
+    specs = factory(n_ue=_get_n_ue(cfg))
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
@@ -445,7 +492,7 @@ def run_n_ap_sweep(
         sweep_results=results, sweep_axis=axis,
         metadata={"n_drops": n_drops, "n_realizations": n_realizations,
                   "field_path": field_path,
-                  "spec_set": "all_algorithms",
+                  "spec_set": spec_set,
                   "cfg_summary": _cfg_summary(cfg)},
     )
 
@@ -457,8 +504,10 @@ def run_antennas_sweep(
     n_drops: int = 20,
     n_realizations: int = 2,
     field_path: str = "topology.n_ant",
+    spec_set: str = "cordis_vs_benchmarks",
 ) -> ExperimentResult:
     """Sweep antennas per AP (M)."""
+    factory = _resolve_spec_set(spec_set)
     if n_ant_values is None:
         n_ant_values = [4, 6, 8, 10, 12]
     axis = SweepAxis(
@@ -466,7 +515,7 @@ def run_antennas_sweep(
         values=[float(v) for v in n_ant_values],
         display=r"$M$",
     )
-    specs = cordis_vs_benchmarks(n_ue=_get_n_ue(cfg))
+    specs = factory(n_ue=_get_n_ue(cfg))
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
@@ -476,7 +525,7 @@ def run_antennas_sweep(
         sweep_results=results, sweep_axis=axis,
         metadata={"n_drops": n_drops, "n_realizations": n_realizations,
                   "field_path": field_path,
-                  "spec_set": "cordis_vs_benchmarks",
+                  "spec_set": spec_set,
                   "cfg_summary": _cfg_summary(cfg)},
     )
 

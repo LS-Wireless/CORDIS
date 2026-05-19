@@ -14,6 +14,7 @@ matching ``validate_stage<tag>.py``:
 * **8d** — Makefile, SLURM wrappers, this umbrella validator
 * **9**  — config-cleanup: n_trials decomposition, gamma_db consolidation,
            sigma_clt override semantics
+* **10** — named spec-set selection (``--specs`` CLI flag across all experiments)
 
 Each sub-validator is a self-contained script under ``scripts/``.  This
 runner invokes them via ``subprocess`` so each runs in its own process
@@ -47,6 +48,7 @@ SUBVALIDATORS: List[Tuple[str, str]] = [
     ("8c", "validate_stage8c.py"),
     ("8d", "validate_stage8d.py"),
     ("9",  "validate_stage9.py"),
+    ("10", "validate_stage10.py"),
 ]
 
 

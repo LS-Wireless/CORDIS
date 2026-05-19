@@ -189,6 +189,45 @@ The precedence chain (highest to lowest):
 
 The chosen path is logged on every run (`Trial counts: n_drops=…, n_realizations=…  (<source>)`).
 
+### Algorithm-set selection (Stage 10)
+
+By default each experiment runs against its historical spec set:
+`sinr_cdf` and `scnr_cdf` run all 9 algorithms; `gamma_sweep`,
+`kappa_sweep`, and `clutter_cnr_sweep` run Split + ADMM + Centralized;
+`antennas_sweep` runs Split + ADMM + 4 benchmarks; the other sweeps
+run all 9.
+
+Override with `SPECS=<name>` on any experiment:
+
+```bash
+# Just Split + ADMM:
+make sinr_cdf SPECS=cordis_only
+
+# Split + ADMM + Centralized (typical paper figure):
+make sinr_cdf SPECS=cordis_vs_centralized
+
+# Same idea on a sweep:
+make snr_sweep SPECS=cordis_only
+```
+
+The four named sets are defined in `cordis/experiments/specs.py`:
+
+| `SPECS=` value | Algorithms |
+|---|---|
+| `cordis_only` | Split, ADMM |
+| `cordis_vs_centralized` | Split, ADMM, Centralized |
+| `cordis_vs_benchmarks` | Split, ADMM, MRT, ZF, RZF, LR-MMSE |
+| `all_algorithms` | all 9 |
+
+Add new named sets by registering a factory in
+`cordis/experiments/registry.py:_SPEC_SETS` — the CLI `choices` list
+picks them up automatically.
+
+Plot scripts adapt automatically: they iterate over whatever
+algorithms are present in the saved result, so changing `SPECS` just
+changes which curves appear without any plot-script edits. The
+saved `manifest.json` records which spec set was used.
+
 ### Reset between runs
 
 ```bash

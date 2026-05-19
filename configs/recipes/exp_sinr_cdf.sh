@@ -25,9 +25,6 @@ fi
 # ─── OVERRIDES — edit these ──────────────────────────────────────────
 NAME="exp_sinr_cdf"
 N_TRIALS=200    # Baseline; final-paper figure may want 500+
-CLUTTER_CNR_DB=-10
-SPLIT_KAPPA=0.5
-ADMM_KAPPA=0.5
 
 # ─── Defaults for everything else ────────────────────────────────────
 source "$SCRIPT_DIR/_defaults.sh"
