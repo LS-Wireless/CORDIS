@@ -1,0 +1,28 @@
+# =============================================================================
+# requirements.txt — CORDIS runtime dependencies
+# =============================================================================
+# Use ``pip install -r requirements.txt`` after creating a venv with
+# Python 3.10 or later.  All listed packages ship Python 3.14 wheels
+# on PyPI as of May 2026.
+#
+# For exact-version reproducibility of the paper's numerical results,
+# see requirements-frozen.txt (pip freeze output from the paper run).
+# =============================================================================
+
+# Core numerics
+numpy>=1.26,<3.0
+scipy>=1.11
+
+# Convex optimisation — primary solver path for CORDIS-Split and Centralized.
+# CLARABEL (default CVXPY solver for CORDIS) is bundled with cvxpy>=1.4.
+cvxpy>=1.5
+
+# Parallel Monte Carlo
+joblib>=1.3
+
+# Plotting
+matplotlib>=3.7
+
+# CLI progress bars (Stage 8 per-trial bar)
+tqdm>=4.65
+

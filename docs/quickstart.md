@@ -239,6 +239,43 @@ scripts/slurm/uci-hpc3/             ← UCI HPC3 site-specific
 └── exp_*.sub  (×11)                ready to `sbatch` as-is
 ```
 
+### First-time setup on HPC3
+
+```bash
+ssh <user>@hpc3.rcic.uci.edu
+
+# 1. Land in DFS public storage (huge quota, fast for compute jobs).
+cd /pub/$USER
+
+# 2. Clone the repo.
+git clone <your-fork-url> CORDIS
+cd CORDIS
+
+# 3. Load Python and create the venv.
+module purge
+module load python/3.14.3
+python -m venv cordis_venv
+source cordis_venv/bin/activate
+
+# 4. Install dependencies (one-time; pip cached locally to the venv).
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# 5. Smoke-test the install — should print Python 3.14.3 + numpy/cvxpy versions.
+python -c "import sys, numpy, cvxpy, scipy, joblib, matplotlib, tqdm; \
+           print('Python:', sys.version.split()[0]); \
+           print('numpy: ', numpy.__version__); \
+           print('cvxpy: ', cvxpy.__version__)"
+
+# 6. Submit a 30-minute test job (the convergence_trace is the cheapest).
+sbatch scripts/slurm/uci-hpc3/exp_convergence_trace.sub
+squeue -u $USER
+```
+
+After setup, every subsequent submission just needs `sbatch
+scripts/slurm/uci-hpc3/exp_<name>.sub` — the script handles module
+loading and venv activation automatically.
+
 On HPC3, after cloning the repo to `/pub/$USER/CORDIS` and setting up
 the venv as `cordis_venv`:
 
