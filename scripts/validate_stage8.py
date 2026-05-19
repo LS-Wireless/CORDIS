@@ -16,6 +16,7 @@ matching ``validate_stage<tag>.py``:
            sigma_clt override semantics
 * **10** — named spec-set selection (``--specs`` CLI flag across all experiments)
 * **11** — UCI HPC3 site-specific SLURM scripts (``scripts/slurm/uci-hpc3/``)
+* **12** — playground notebooks (one per result kind, under ``notebooks/``)
 
 Each sub-validator is a self-contained script under ``scripts/``.  This
 runner invokes them via ``subprocess`` so each runs in its own process
@@ -51,6 +52,7 @@ SUBVALIDATORS: List[Tuple[str, str]] = [
     ("9",  "validate_stage9.py"),
     ("10", "validate_stage10.py"),
     ("11", "validate_stage11.py"),
+    ("12", "validate_stage12.py"),
 ]
 
 

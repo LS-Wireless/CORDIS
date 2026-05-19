@@ -123,6 +123,7 @@ test:
 # ─── Maintenance ─────────────────────────────────────────────────────────────
 regenerate-scripts:
 	$(PYTHON) scripts/regenerate_experiment_scripts.py
+	$(PYTHON) notebooks/_build_playgrounds.py
 
 clean-figures:
 	rm -rf figures/

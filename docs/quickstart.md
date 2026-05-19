@@ -226,6 +226,49 @@ algorithms are present in the saved result, so changing `SPECS` just
 changes which curves appear without any plot-script edits. The
 saved `manifest.json` records which spec set was used.
 
+## Plot playgrounds (Stage 12)
+
+For interactive plot styling — beyond what `make plot-*` produces — open
+one of four Jupyter playground notebooks under `notebooks/`.  Each one
+focuses on a single result *kind* and works across every experiment of
+that kind:
+
+| Notebook | Covers experiments |
+|---|---|
+| `notebooks/playground_cdf.ipynb` | `sinr_cdf`, `scnr_cdf` |
+| `notebooks/playground_sweep.ipynb` | `snr_sweep`, `gamma_sweep`, `kappa_sweep`, `clutter_cnr_sweep`, `n_ue_sweep`, `n_ap_sweep`, `antennas_sweep` |
+| `notebooks/playground_trace.ipynb` | `convergence_trace` |
+| `notebooks/playground_table.ipynb` | `fronthaul_table` |
+
+Each notebook starts with a single editable line:
+
+```python
+EXPERIMENT = "sinr_cdf"      # ← change this; Restart-Run-All
+```
+
+Switching from `sinr_cdf` to `scnr_cdf` (or between any two sweeps in
+the sweep notebook) is one edit and a re-run.  The notebook loads the
+most recent `results/exp_<EXPERIMENT>/<ts>/` run automatically; pass
+a specific run path to `load_run(...)` for historical comparison.
+
+```bash
+jupyter lab notebooks/playground_cdf.ipynb
+```
+
+The notebooks share `notebooks/_playground_helpers.py` for the loader
+and style-setup boilerplate — keep that file in sync if you customise.
+
+**Maintenance.**  All four notebooks are regenerated from a single
+build script:
+
+```bash
+python3 notebooks/_build_playgrounds.py    # regenerates all 4
+```
+
+Use `jupyter nbconvert --clear-output --inplace notebooks/playground_*.ipynb`
+to scrub cell outputs before committing — `validate_stage12.py` Test 10
+enforces this.
+
 ## Running on UCI HPC3 (Stage 11)
 
 The repo ships two parallel SLURM trees:

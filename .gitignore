@@ -183,6 +183,7 @@ configs/scratch_*.json
 
 # Uncomment if you prefer to ignore all notebooks entirely:
 # notebooks/*.ipynb
+# !notebooks/plot_playground.ipynb
 
 
 # =============================================================================
