@@ -189,9 +189,7 @@ The precedence chain (highest to lowest):
 
 The chosen path is logged on every run (`Trial counts: n_drops=…, n_realizations=…  (<source>)`).
 
-### Algorithm-set selection (Stage 10)
-
-By default each experiment runs against its historical spec set:
+### Algorithm-set selection (Stage 10)By default each experiment runs against its historical spec set:
 `sinr_cdf` and `scnr_cdf` run all 9 algorithms; `gamma_sweep`,
 `kappa_sweep`, and `clutter_cnr_sweep` run Split + ADMM + Centralized;
 `antennas_sweep` runs Split + ADMM + 4 benchmarks; the other sweeps
@@ -227,6 +225,70 @@ Plot scripts adapt automatically: they iterate over whatever
 algorithms are present in the saved result, so changing `SPECS` just
 changes which curves appear without any plot-script edits. The
 saved `manifest.json` records which spec set was used.
+
+## Running on UCI HPC3 (Stage 11)
+
+The repo ships two parallel SLURM trees:
+
+```
+scripts/slurm/                      ← generic, portable templates
+└── exp_*.sbatch  (×11)             starting points for any cluster
+
+scripts/slurm/uci-hpc3/             ← UCI HPC3 site-specific
+├── _config.sh                      shared cluster + personal settings
+└── exp_*.sub  (×11)                ready to `sbatch` as-is
+```
+
+On HPC3, after cloning the repo to `/pub/$USER/CORDIS` and setting up
+the venv as `cordis_venv`:
+
+```bash
+sbatch scripts/slurm/uci-hpc3/exp_sinr_cdf.sub
+```
+
+That's it. The submission script handles everything:
+
+1. Sources `_config.sh` for account, partition, mail, repo dir, and python module
+2. Cleans the module env and loads the right Python
+3. Activates `cordis_venv`
+4. Sets `N_WORKERS=$SLURM_CPUS_PER_TASK` so joblib uses the full allocation
+5. Invokes `bash scripts/exp_<name>.sh`
+
+The `.sub` files also accept all the env-var knobs the launchers expose
+(`N_TRIALS`, `N_DROPS`, `N_REAL`, `SPECS`, `OUTPUT_ROOT`). Combined with
+cluster settings, you can override anything per-submit:
+
+```bash
+# Test on the free partition first, then run on standard:
+CORDIS_PARTITION=free sbatch scripts/slurm/uci-hpc3/exp_sinr_cdf.sub
+sbatch                       scripts/slurm/uci-hpc3/exp_sinr_cdf.sub
+
+# Restrict to 3 algorithms for a quick comparison:
+SPECS=cordis_vs_centralized N_TRIALS=400 \
+    sbatch scripts/slurm/uci-hpc3/exp_sinr_cdf.sub
+
+# A different group account:
+CORDIS_ACCOUNT=other_lab sbatch scripts/slurm/uci-hpc3/exp_sinr_cdf.sub
+```
+
+`_config.sh` defaults (override any of them at submit time):
+
+| Variable | Default |
+|---|---|
+| `CORDIS_ACCOUNT` | `swindle_lab` |
+| `CORDIS_PARTITION` | `standard` |
+| `CORDIS_MAIL_USER` | `mzafarid@uci.edu` |
+| `CORDIS_MAIL_TYPE` | `END,FAIL` |
+| `CORDIS_REPO_DIR` | `/pub/$USER/CORDIS` |
+| `CORDIS_PYTHON_MODULE` | `python/3.12` |
+| `CORDIS_VENV` | `cordis_venv` |
+
+**Adapting to a different cluster.** Copy `scripts/slurm/uci-hpc3/` to
+e.g. `scripts/slurm/nersc/`, edit `_config.sh` for the new cluster's
+account/partition/path/module conventions, and the per-experiment
+`.sub` files come along for free (they only reference variables from
+`_config.sh`). The generic `.sbatch` files in `scripts/slurm/` remain
+the documented starting point.
 
 ### Reset between runs
 
