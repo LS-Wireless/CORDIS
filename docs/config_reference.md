@@ -84,8 +84,8 @@ Generated automatically from `cordis/utils/config.py`.
 | `max_tx_aps_per_target` | int | `5` | - | [1, n_ap - 1] | Maximum number of transmit APs illuminating a single target K_tx |
 | `max_rx_aps_per_target` | int | `3` | - | [1, n_sensing_rx] | Maximum number of receive APs processing echoes from a single target K_rx |
 | `n_snapshots` | int | `20` | symbols | >= 1 | Number of slow-time STAP snapshots T; multiplicative temporal gain in SCNR |
-| `sigma_clt` | float | `0.1` | - | >= 0 | Clutter channel amplitude gain sigma_clt in H^clt = sigma_clt C_r^{1/2} Q C_t^{1/2} |
-| `clutter_cnr_db` | float | `-10.0` | dB | any real (typical: -20 to 0) | Clutter-to-noise ratio (CNR); sets sigma_clt^2 relative to sigma_n^2 |
+| `sigma_clt` | Optional[float] | `null` | - | null OR >= 0 | OPTIONAL explicit override for sigma_clt.  If null (default), sigma_clt is derived from clutter_cnr_db; if set, this value is used directly (sigma_clt^2 = sigma_clt^2, ignoring CNR). |
+| `clutter_cnr_db` | float | `-10.0` | dB | any real (typical: -20 to 0) | Clutter-to-noise ratio (CNR); sets sigma_clt^2 = 10^(CNR/10) * sigma_n^2.  Used only when sensing.sigma_clt is null (default). |
 | `rho_clt_model` | str | `constant` | - | {constant|jakes|gaussian}  (constant => rho=1 for all lags) | Temporal autocorrelation model for the clutter Doppler process rho_clt(Delta_tau) |
 | `rho_clt_bandwidth` | float | `0.1` | - | (0, 0.5] | Normalised clutter Doppler bandwidth (fraction of PRF); used by jakes/gaussian models |
 | `clutter_as_deg` | float | `15.0` | deg | > 0 | Angular spread of clutter returns; controls spatial correlation C_a of clutter |
@@ -110,7 +110,6 @@ Generated automatically from `cordis/utils/config.py`.
 
 | Parameter | Type | Default | Unit | Range | Description |
 |-----------|------|---------|------|-------|-------------|
-| `gamma_db` | float | `10.0` | dB | any real (typical: 0 to 20) | Per-user minimum SINR requirement gamma_u applied uniformly |
 | `epsilon_reg` | float | `0.01` | - | > 0 (typical: 1e-3 to 1e-1) | Regularisation parameter epsilon in LR-MMSE precoder (eq. split-comm-bf) |
 | `epsilon_nsc` | float | `0.001` | - | > 0 (typical: 1e-4 to 1e-2) | Loading factor epsilon for null-space projection P_perp in NS-C beamformer |
 | `target_priority_equal` | bool | `true` | - | {true|false} | Use equal priority weights omega_t = 1 for all targets in NS-C allocation |
