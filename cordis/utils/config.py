@@ -228,9 +228,14 @@ class SensingConfig:
     n_snapshots: int = 20           # T = number of slow-time sensing symbols
 
     # ── Clutter model (eq. clutter-channel) ──────────────────────────────
-    sigma_clt: float = 0.1          # Clutter channel gain σ_clt
-    # σ_clt^2 = clutter-to-noise ratio × σ_n^2 / (M_r M_t)  (set via clutter_cnr_db)
-    clutter_cnr_db: float = -10.0   # Clutter-to-noise ratio [dB]
+    # Two ways to set σ_clt²:
+    #   • ``clutter_cnr_db``  → σ_clt² = 10^(CNR/10) × σ_n²  (default, recommended)
+    #   • ``sigma_clt``       → σ_clt² = sigma_clt²          (explicit override)
+    # If ``sigma_clt`` is None (default) the CNR-based formula is used.
+    # Set sigma_clt to a positive float to bypass CNR and pin σ_clt to a
+    # noise-independent value (useful for unit tests and power-fixed studies).
+    sigma_clt: Optional[float] = None     # Direct σ_clt override; None ⇒ use CNR
+    clutter_cnr_db: float = -10.0         # Clutter-to-noise ratio [dB]
     # Temporal correlation of clutter (ρ_clt(Δτ)):
     rho_clt_model: str = "constant" # "constant" (ρ=1) | "jakes" | "gaussian"
     rho_clt_bandwidth: float = 0.1  # Normalised clutter Doppler bandwidth
@@ -315,10 +320,14 @@ class SplitOptConfig:
         Solves P-Split (eq. split-pa-opt) via CVXPY interior-point.
         Objective : clutter-aware linear sensing surrogate
         Constraint: per-user SINR constraints SINR_u ≥ γ_u
-    """
 
-    # ── Per-user SINR threshold (γ_u applied uniformly) ──────────────────
-    gamma_db: float = 10.0          # Minimum SINR requirement γ_u [dB]
+    Note
+    ----
+    γ_u (the per-user SINR target) lives at
+    ``cfg.algorithm.gamma_db`` (umbrella level) so it is shared with
+    ADMM, Centralized, and benchmarks.  This dataclass keeps
+    Split-specific knobs only.
+    """
 
     # ── LR-MMSE (communication BF, eq. split-comm-bf) ────────────────────
     epsilon_reg: float = 1e-2       # Regularisation ε in LR-MMSE precoder
@@ -339,7 +348,20 @@ class SplitOptConfig:
 
 @dataclass
 class AlgorithmConfig:
-    """Container for all algorithm-specific configs."""
+    """
+    Container for all algorithm-specific configs.
+
+    ``gamma_db`` is the per-user minimum SINR target γ_u applied
+    uniformly across users.  It is shared by every algorithm in the
+    framework — Split, ADMM, Centralized, and the local benchmarks
+    — because the point of comparing algorithms is to evaluate them
+    against the *same* QoS requirement.  For sweep studies that want
+    per-spec heterogeneity, the spec builders in
+    :mod:`cordis.experiments.specs` accept a ``gamma_u_db`` kwarg that
+    overrides this default.
+    """
+
+    gamma_db: float = 10.0          # Minimum SINR requirement γ_u [dB]
 
     admm: ADMMConfig = field(default_factory=ADMMConfig)
     split: SplitOptConfig = field(default_factory=SplitOptConfig)
@@ -974,12 +996,15 @@ PARAM_REGISTRY: Dict[str, Dict[str, str]] = {
         "range": ">= 1",
     },
     "sensing.sigma_clt": {
-        "help":  "Clutter channel amplitude gain sigma_clt in H^clt = sigma_clt C_r^{1/2} Q C_t^{1/2}",
+        "help":  "OPTIONAL explicit override for sigma_clt.  If null (default), "
+                 "sigma_clt is derived from clutter_cnr_db; if set, this value "
+                 "is used directly (sigma_clt^2 = sigma_clt^2, ignoring CNR).",
         "unit":  "-",
-        "range": ">= 0",
+        "range": "null OR >= 0",
     },
     "sensing.clutter_cnr_db": {
-        "help":  "Clutter-to-noise ratio (CNR); sets sigma_clt^2 relative to sigma_n^2",
+        "help":  "Clutter-to-noise ratio (CNR); sets sigma_clt^2 = 10^(CNR/10) * "
+                 "sigma_n^2.  Used only when sensing.sigma_clt is null (default).",
         "unit":  "dB",
         "range": "any real (typical: -20 to 0)",
     },
@@ -1079,12 +1104,15 @@ PARAM_REGISTRY: Dict[str, Dict[str, str]] = {
         "range": "{CLARABEL|GUROBI|MOSEK|SCS}",
     },
 
-    # ── SplitOptConfig ────────────────────────────────────────────────────
-    "algorithm.split.gamma_db": {
-        "help":  "Per-user minimum SINR requirement gamma_u applied uniformly",
+    # ── AlgorithmConfig (umbrella — shared by every algorithm) ───────────
+    "algorithm.gamma_db": {
+        "help":  "Per-user minimum SINR requirement gamma_u; shared by "
+                 "Split / ADMM / Centralized / benchmarks",
         "unit":  "dB",
         "range": "any real (typical: 0 to 20)",
     },
+
+    # ── SplitOptConfig ────────────────────────────────────────────────────
     "algorithm.split.epsilon_reg": {
         "help":  "Regularisation parameter epsilon in LR-MMSE precoder (eq. split-comm-bf)",
         "unit":  "-",

@@ -52,7 +52,7 @@ from cordis.experiments.result import (
 
 from cordis.experiments.specs import (
     # defaults (aligned with configs/default.json)
-    DEFAULT_GAMMA_DB, DEFAULT_KAPPA,
+    DEFAULT_KAPPA,
     DEFAULT_RHO_ADMM, DEFAULT_N_ADMM_MAX, DEFAULT_XI_SLACK,
     # individual spec builders
     split_spec, admm_spec, centralized_spec,
@@ -88,7 +88,7 @@ __all__ = [
     # result
     "ExperimentResult", "LoadedADMMResult", "VALID_KINDS",
     # specs — defaults
-    "DEFAULT_GAMMA_DB", "DEFAULT_KAPPA",
+    "DEFAULT_KAPPA",
     "DEFAULT_RHO_ADMM", "DEFAULT_N_ADMM_MAX", "DEFAULT_XI_SLACK",
     # specs — builders
     "split_spec", "admm_spec", "centralized_spec",

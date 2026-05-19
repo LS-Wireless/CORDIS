@@ -127,15 +127,15 @@ def _cfg_summary(cfg: Any) -> Dict[str, Any]:
 
     Field paths reflect the real CORDISConfig tree (see
     cordis/utils/config.py): topology.{n_ap, n_ue, n_targets, n_ant},
-    channel.snr_db, algorithm.{admm.kappa, split.gamma_db}.
+    channel.snr_db, algorithm.{gamma_db, admm.kappa}.
     """
     summary: Dict[str, Any] = {}
     for path in (
         "topology.n_ap", "topology.n_ue",
         "topology.n_targets", "topology.n_ant",
         "channel.snr_db",
+        "algorithm.gamma_db",
         "algorithm.admm.kappa",
-        "algorithm.split.gamma_db",
     ):
         try:
             cursor = cfg

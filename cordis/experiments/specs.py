@@ -73,7 +73,7 @@ consumes.  This is the property parameter sweeps rely on.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -117,11 +117,16 @@ _DISPLAY: Dict[str, str] = {
 #  built with no overrides matches what cfg promises.
 # ─────────────────────────────────────────────────────────────────────
 
-DEFAULT_GAMMA_DB    = 10.0    # matches cfg.algorithm.split.gamma_db
 DEFAULT_KAPPA       = 1.0     # matches cfg.algorithm.admm.kappa
 DEFAULT_RHO_ADMM    = 1.0     # matches cfg.algorithm.admm.rho
 DEFAULT_N_ADMM_MAX  = 50      # matches cfg.algorithm.admm.n_max
 DEFAULT_XI_SLACK    = 1e4     # matches cfg.algorithm.admm.xi_slack
+
+# Sentinel used by spec builders.  ``gamma_u_db=None`` means "use the
+# value from cfg.algorithm.gamma_db at solver invocation time" — i.e.
+# don't put a gamma_u_db entry in spec.params.  Pass a number to
+# override.  See cordis/algorithms/{joint_opt,centralized}.py for the
+# fallback branch.
 
 
 def _gamma_vec(gamma_u_db: float, n_ue: int) -> np.ndarray:
@@ -131,6 +136,16 @@ def _gamma_vec(gamma_u_db: float, n_ue: int) -> np.ndarray:
     scalar becomes a 0-d array which is unindexable.
     """
     return np.full(int(n_ue), float(gamma_u_db), dtype=float)
+
+
+def _gamma_params(gamma_u_db: Optional[float], n_ue: int) -> dict:
+    """Return either ``{"gamma_u_db": vec}`` or ``{}`` for spec.params.
+
+    ``None`` means "let the algorithm read from cfg.algorithm.gamma_db".
+    """
+    if gamma_u_db is None:
+        return {}
+    return {"gamma_u_db": _gamma_vec(gamma_u_db, n_ue)}
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -146,7 +161,7 @@ def _gamma_vec(gamma_u_db: float, n_ue: int) -> np.ndarray:
 def split_spec(
     *,
     n_ue: int = 1,
-    gamma_u_db: float = DEFAULT_GAMMA_DB,
+    gamma_u_db: Optional[float] = None,
     **ignored,
 ) -> AlgorithmSpec:
     """CORDIS-Split (Algorithm 1): local-BF + centralised P-Split PA."""
@@ -154,10 +169,9 @@ def split_spec(
         name=_DISPLAY["split"],
         kind="cordis_split",
         params={
-            "gamma_u_db": _gamma_vec(gamma_u_db, n_ue),
+            **_gamma_params(gamma_u_db, n_ue),
             # comm_bf_method defaults to "lr_mmse" in the dispatcher.
-            # omega / use_cvxpy left out → solver-side defaults apply
-            # (uniform target priorities, CVXPY auto-detect).
+            # omega / use_cvxpy left out → solver-side defaults apply.
         },
     )
 
@@ -165,7 +179,7 @@ def split_spec(
 def admm_spec(
     *,
     n_ue: int = 1,
-    gamma_u_db: float = DEFAULT_GAMMA_DB,
+    gamma_u_db: Optional[float] = None,
     kappa:      float = DEFAULT_KAPPA,
     rho_admm:   float = DEFAULT_RHO_ADMM,
     n_admm_max: int   = DEFAULT_N_ADMM_MAX,
@@ -185,7 +199,7 @@ def admm_spec(
         name=_DISPLAY["admm"],
         kind="cordis_admm",
         params={
-            "gamma_u_db":  _gamma_vec(gamma_u_db, n_ue),
+            **_gamma_params(gamma_u_db, n_ue),
             "kappa":       float(kappa),
             "rho_admm":    float(rho_admm),
             "n_admm_max":  int(n_admm_max),
@@ -198,7 +212,7 @@ def admm_spec(
 def centralized_spec(
     *,
     n_ue: int = 1,
-    gamma_u_db: float = DEFAULT_GAMMA_DB,
+    gamma_u_db: Optional[float] = None,
     **ignored,
 ) -> AlgorithmSpec:
     """Centralized joint BF + PA (upper bound).
@@ -213,8 +227,8 @@ def centralized_spec(
         name=_DISPLAY["centralized"],
         kind="centralized",
         params={
-            "gamma_u_db": _gamma_vec(gamma_u_db, n_ue),
-            # warm_start / use_cvxpy intentionally omitted (see module docstring).
+            **_gamma_params(gamma_u_db, n_ue),
+            # warm_start / use_cvxpy intentionally omitted.
         },
     )
 
@@ -223,7 +237,7 @@ def _benchmark_spec(
     kind: str,
     *,
     n_ue: int = 1,
-    gamma_u_db: float = DEFAULT_GAMMA_DB,
+    gamma_u_db: Optional[float] = None,
     **ignored,
 ) -> AlgorithmSpec:
     """Generic builder for any registered benchmark."""
@@ -232,7 +246,7 @@ def _benchmark_spec(
         kind="benchmark",
         params={
             "benchmark_name": _BENCHMARK_NAME[kind],
-            "gamma_u_db":     _gamma_vec(gamma_u_db, n_ue),
+            **_gamma_params(gamma_u_db, n_ue),
             # omega / use_cvxpy left out → solver-side defaults apply.
         },
     )
@@ -302,7 +316,7 @@ __all__ = [
     # Display-name + benchmark-name lookup tables
     "_DISPLAY", "_BENCHMARK_NAME",
     # Defaults (aligned with configs/default.json)
-    "DEFAULT_GAMMA_DB", "DEFAULT_KAPPA",
+    "DEFAULT_KAPPA",
     "DEFAULT_RHO_ADMM", "DEFAULT_N_ADMM_MAX", "DEFAULT_XI_SLACK",
     # Individual spec builders
     "split_spec", "admm_spec", "centralized_spec",

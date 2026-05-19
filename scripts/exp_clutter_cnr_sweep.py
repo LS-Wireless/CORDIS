@@ -33,22 +33,22 @@ from _exp_common import (    # noqa: E402
 
 def main() -> None:
     parser = build_base_parser("clutter_cnr_sweep")
-    add_sweep_args(parser,
-                          default_n_drops=20,
-                          default_n_real=2)
+    add_sweep_args(parser)
     parser.add_argument("--cnr-values-db", default='',
                         help='Comma- or space-separated CNR values in dB. Empty → use registry default.')
     args = parser.parse_args()
 
     extra_kwargs = {
-        "n_drops":        args.n_drops,
-        "n_realizations": args.n_realizations,
         "cnr_values_db": parse_value_list(args.cnr_values_db, float) or None,
     }
     # Drop any None-valued sweep ranges so the registry uses its defaults.
     extra_kwargs = {k: v for k, v in extra_kwargs.items() if v is not None}
 
-    run_experiment("clutter_cnr_sweep", args, extra_kwargs)
+    # Per-experiment fallback drops × real (used only if CLI args don't
+    # specify trial counts and config has no simulation.n_trials).
+    run_experiment("clutter_cnr_sweep", args, extra_kwargs,
+                   fallback_n_drops=20,
+                   fallback_n_real=2)
 
 
 if __name__ == "__main__":

@@ -143,12 +143,16 @@ LOS_PROBABILITY_OVERRIDE="null"  # Fixed LoS prob in [0,1]; "null" = use model
 MAX_TX_APS_PER_TARGET=5      # Max TX APs illuminating one target
 MAX_RX_APS_PER_TARGET=3      # Max RX APs listening to one target
 
+# =============================================================================
+# ALGORITHM — QoS CONSTRAINT FOR ALL ALGORITHMS
+# =============================================================================
+
+GAMMA_DB=10.0                 # Min-SINR constraint γ [dB]
 
 # =============================================================================
 # ALGORITHM — CORDIS-Split
 # =============================================================================
 
-SPLIT_GAMMA_DB=10.0          # Min-SINR constraint γ [dB]
 SPLIT_EPSILON_REG=0.01       # LR-MMSE regularisation ε
 SPLIT_EPSILON_NSC=0.001      # NS-C regularisation ε
 SPLIT_KAPPA=1.0              # Clutter penalty κ
@@ -225,7 +229,7 @@ python3 scripts/create_config.py \
         sensing.los_probability_override="$LOS_PROBABILITY_OVERRIDE" \
         sensing.max_tx_aps_per_target="$MAX_TX_APS_PER_TARGET" \
         sensing.max_rx_aps_per_target="$MAX_RX_APS_PER_TARGET" \
-        algorithm.split.gamma_db="$SPLIT_GAMMA_DB"            \
+        algorithm.gamma_db="$GAMMA_DB"                        \
         algorithm.split.epsilon_reg="$SPLIT_EPSILON_REG"      \
         algorithm.split.epsilon_nsc="$SPLIT_EPSILON_NSC"      \
         algorithm.split.kappa="$SPLIT_KAPPA"                  \

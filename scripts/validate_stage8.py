@@ -3,15 +3,17 @@
 scripts/validate_stage8.py
 ==========================
 
-Umbrella validator: runs Stage 8 sub-validators in sequence and reports
-an aggregate result.
-
-Stage 8 ships in four sub-stages:
+Umbrella validator: runs every CORDIS sub-validator in sequence and
+reports an aggregate result.  The name is historical (it originally
+covered Stage 8 sub-stages only) — it now drives every stage with a
+matching ``validate_stage<tag>.py``:
 
 * **8a** — paper-style plotting primitives (``cordis.plotting``)
 * **8b** — experiment registry, runner, and result I/O
 * **8c** — per-experiment runner / plot scripts (paper figures)
 * **8d** — Makefile, SLURM wrappers, this umbrella validator
+* **9**  — config-cleanup: n_trials decomposition, gamma_db consolidation,
+           sigma_clt override semantics
 
 Each sub-validator is a self-contained script under ``scripts/``.  This
 runner invokes them via ``subprocess`` so each runs in its own process
@@ -21,7 +23,7 @@ Usage::
 
     python3 scripts/validate_stage8.py                # run them all
     python3 scripts/validate_stage8.py --list         # list sub-validators
-    python3 scripts/validate_stage8.py --only 8b 8d   # run only some
+    python3 scripts/validate_stage8.py --only 9       # run only Stage 9
     python3 scripts/validate_stage8.py --stop-on-fail # halt after first failure
 """
 from __future__ import annotations
@@ -44,6 +46,7 @@ SUBVALIDATORS: List[Tuple[str, str]] = [
     ("8b", "validate_stage8b.py"),
     ("8c", "validate_stage8c.py"),
     ("8d", "validate_stage8d.py"),
+    ("9",  "validate_stage9.py"),
 ]
 
 

@@ -33,22 +33,22 @@ from _exp_common import (    # noqa: E402
 
 def main() -> None:
     parser = build_base_parser("fronthaul_table")
-    add_sweep_args(parser,
-                          default_n_drops=20,
-                          default_n_real=2)
+    add_sweep_args(parser)
     parser.add_argument("--n-admm-drops", type=int, default=20,
                         help='Drops used to estimate average ADMM iteration count.')
     args = parser.parse_args()
 
     extra_kwargs = {
-        "n_drops":        args.n_drops,
-        "n_realizations": args.n_realizations,
         "n_admm_drops": args.n_admm_drops,
     }
     # Drop any None-valued sweep ranges so the registry uses its defaults.
     extra_kwargs = {k: v for k, v in extra_kwargs.items() if v is not None}
 
-    run_experiment("fronthaul_table", args, extra_kwargs)
+    # Per-experiment fallback drops × real (used only if CLI args don't
+    # specify trial counts and config has no simulation.n_trials).
+    run_experiment("fronthaul_table", args, extra_kwargs,
+                   fallback_n_drops=20,
+                   fallback_n_real=2)
 
 
 if __name__ == "__main__":

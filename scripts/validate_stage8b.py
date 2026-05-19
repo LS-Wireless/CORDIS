@@ -34,7 +34,7 @@ import sys
 import tempfile
 import traceback
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Callable
 
 import numpy as np
 
@@ -51,7 +51,7 @@ class _SkipTest(Exception):
     """Raised by a test when its preconditions (e.g. a heavy import) fail."""
 
 
-_TESTS: List[Tuple[str, callable]] = []
+_TESTS: List[Tuple[str, Callable]] = []
 
 
 def _register(label: str):
@@ -77,7 +77,7 @@ from cordis.experiments import (         # noqa: E402
     global_mrt_spec, global_zf_spec,
     cordis_only, cordis_vs_centralized,
     cordis_vs_benchmarks, all_algorithms,
-    DEFAULT_GAMMA_DB, DEFAULT_KAPPA,
+    DEFAULT_KAPPA,
     # sweeps
     SweepAxis, sweep_config_field, sweep_spec_factory,
     # result
@@ -133,6 +133,21 @@ def test_01_individual_specs():
     s = split_spec(n_ue=3, gamma_u_db=7.0, this_kwarg_does_not_exist=42)
     assert float(s.params["gamma_u_db"][0]) == 7.0
     assert s.params["gamma_u_db"].shape == (3,)
+
+
+@_register("Test  1b: spec builders omit gamma_u_db when not overridden (Stage 9)")
+def test_01b_gamma_default_omitted():
+    """Stage 9: gamma_u_db defaults to None in spec builders, which means
+    the key is OMITTED from spec.params so the algorithm falls back to
+    cfg.algorithm.gamma_db.  An explicit numeric value still flows through."""
+    for fn in (split_spec, admm_spec, centralized_spec,
+               mrt_spec, zf_spec, global_zf_spec):
+        spec = fn(n_ue=4)  # no gamma_u_db override
+        assert "gamma_u_db" not in spec.params, (
+            f"{fn.__name__}: without explicit gamma_u_db the key should be "
+            f"OMITTED from spec.params (so the algorithm reads "
+            f"cfg.algorithm.gamma_db).  Got params={spec.params!r}"
+        )
 
 
 @_register("Test  2: ADMM spec carries kappa explicitly (Stage 7 fix)")

@@ -92,7 +92,7 @@ class CentralizedResult:
     W_tx              : dict[ap_idx → (M_t, D)] optimised beamformers
     objective_history : list of true sensing utility values per SCA iteration
     sinr_history      : list of per-user SINR (linear) per SCA iteration
-    power_history     : list of per-AP power utilization ratios per SCA iter
+    power_history     : list of per-AP power utilisation ratios per SCA iter
     converged         : SCA loop converged
     n_sca_iters       : number of SCA iterations taken
     solver            : solver name used for inner problem
@@ -189,7 +189,7 @@ def _sensing_objective(
     kappa: float,
 ) -> float:
     """
-    Evaluate the SCA-linearized sensing utility:
+    Evaluate the SCA-linearised sensing utility:
         Σ_{a_t} [ 2 Re{tr(G^H W)} − κ tr(W^H C W) ]
     """
     val = 0.0
@@ -376,7 +376,7 @@ def _solve_inner_cvxpy(
     solver: str = "CLARABEL",
 ) -> Tuple[Dict[int, NDArray[np.complex128]], bool]:
     """
-    Solve one SCA inner problem via CVXPY SOCP with unit-power normalization.
+    Solve one SCA inner problem via CVXPY SOCP with unit-power normalisation.
 
     Returns
     -------
@@ -398,7 +398,7 @@ def _solve_inner_cvxpy(
         and    ṽ_u stacks rescaled MUI/S2CI scalars, R̃̃^{1/2} W̃ vectors,
                and a unit noise entry (since σ²/σ² = 1).
 
-    The SCA objective (in normalized W̃ units) is:
+    The SCA objective (in normalised W̃ units) is:
 
         max  2√P_max · Re{tr(G^H W̃)}  −  κ P_max ‖C^{1/2} W̃‖²_F
 
@@ -479,7 +479,7 @@ def _solve_inner_cvxpy(
     # The raw clutter term  κ · Pmax · ‖C^{1/2} W̃‖²  scales with Pmax,
     # whereas the bare sensing gradient term scales as √Pmax · |G·W̃|.
     # At 90 dB SNR (Pmax ≫ 1) the raw clutter term dwarfs the sensing
-    # term for any sane κ, so SCA collapses W to "minimize clutter
+    # term for any sane κ, so SCA collapses W to "minimise clutter
     # response" — which, in geometries where clutter PAS overlaps the
     # target direction, also kills the target response.
     #
@@ -551,7 +551,7 @@ def _solve_inner_cvxpy(
             )
             return W_prev, False
 
-    # ── Denormalize: W = √P_max · W̃ ──────────────────────────────────────
+    # ── Denormalise: W = √P_max · W̃ ──────────────────────────────────────
     W_out = {
         a: sqrt_pmax * np.asarray(W_var[a].value, dtype=np.complex128)
         for a in tx_ap_order
@@ -595,7 +595,7 @@ def solve_centralized(
     verbose: bool = False,
 ) -> CentralizedResult:
     """
-    Centralized benchmark: joint BF+PA via SCA with full network knowledge.
+    Centralised benchmark: joint BF+PA via SCA with full network knowledge.
 
     Parameters
     ----------
@@ -620,7 +620,7 @@ def solve_centralized(
     if omega is None:
         omega = {tg: 1.0 for tg in range(n_t)}
     if gamma_u_db is None:
-        gamma_lin = db2lin(cfg.algorithm.split.gamma_db) * np.ones(n_ue)
+        gamma_lin = db2lin(cfg.algorithm.gamma_db) * np.ones(n_ue)
     else:
         gamma_lin = db2lin(np.asarray(gamma_u_db, dtype=float))
 
@@ -765,7 +765,7 @@ def run_centralized(
     **kwargs,
 ) -> Tuple[Dict[int, NDArray[np.complex128]], CentralizedResult]:
     """
-    Full centralized pipeline: warm-start → SCA solve → W_tx.
+    Full centralised pipeline: warm-start → SCA solve → W_tx.
 
     Returns
     -------

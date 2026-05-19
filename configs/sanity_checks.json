@@ -68,7 +68,7 @@
     "max_tx_aps_per_target": 5,
     "max_rx_aps_per_target": 3,
     "n_snapshots": 20,
-    "sigma_clt": 0.1,
+    "sigma_clt": null,
     "clutter_cnr_db": -10.0,
     "rho_clt_model": "constant",
     "rho_clt_bandwidth": 0.1,
@@ -77,6 +77,7 @@
     "clutter_offset_az_deg": 60.0
   },
   "algorithm": {
+    "gamma_db": 10.0,
     "admm": {
       "kappa": 1.0,
       "rho": 1.0,
@@ -89,7 +90,6 @@
       "solver": "CLARABEL"
     },
     "split": {
-      "gamma_db": 10.0,
       "epsilon_reg": 0.01,
       "epsilon_nsc": 0.001,
       "target_priority_equal": true,

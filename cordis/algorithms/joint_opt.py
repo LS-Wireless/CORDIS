@@ -686,7 +686,7 @@ def solve_cordis_admm(
 
     # ── SINR targets ─────────────────────────────────────────────────────
     if gamma_u_db is None:
-        gamma_lin = db2lin(cfg.algorithm.split.gamma_db) * np.ones(n_ue)
+        gamma_lin = db2lin(cfg.algorithm.gamma_db) * np.ones(n_ue)
     else:
         gamma_lin = db2lin(np.asarray(gamma_u_db, dtype=np.float64))
 

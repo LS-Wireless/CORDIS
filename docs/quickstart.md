@@ -164,6 +164,31 @@ code (0 iff every sub-validator passes).
 5. Run `make regenerate-scripts` (or `python3 scripts/regenerate_experiment_scripts.py`).
 6. Run `make validate` — Tests 10 + similar will tell you if anything is out of sync.
 
+### Trial-count knobs (Stage 9)
+
+There are two equivalent ways to control how many trials each experiment runs:
+
+```bash
+# Option A — set the total, let the framework decompose into drops × real:
+make sinr_cdf N_TRIALS=400         # → 20 drops × 20 real (closest factor pair)
+make sinr_cdf N_TRIALS=100         # → 10 × 10
+
+# Option B — set drops and realizations explicitly:
+make sinr_cdf N_DROPS=10 N_REAL=40
+
+# Partial mix is OK too — explicit dim wins, the other is computed:
+make sinr_cdf N_TRIALS=200 N_DROPS=8        # → 8 drops × 25 real
+```
+
+The precedence chain (highest to lowest):
+
+1. Explicit `--n-drops` AND `--n-realizations` from CLI / env
+2. `--n-trials` CLI flag (decompose; if one dim is set, computes the other)
+3. `cfg.simulation.n_trials` from the experiment's JSON config (decompose)
+4. Per-experiment fallback baked into `scripts/exp_<name>.py`
+
+The chosen path is logged on every run (`Trial counts: n_drops=…, n_realizations=…  (<source>)`).
+
 ### Reset between runs
 
 ```bash
@@ -178,6 +203,28 @@ make clean-results        # rm -rf results/  (5-second warning, then deletes)
 make regenerate-scripts   # refresh exp_*.sh/.py, plot_*.py, slurm/*.sbatch
 make validate             # confirm everything still hangs together
 ```
+
+---
+
+## Stage 9 migration notes
+
+Stage 9 consolidated three vestigial config patterns.  If you're updating
+from an older checkout, edit `configs/default.json` (and any `configs/exp_*.json`)
+accordingly:
+
+| Old key | New key | What changed |
+|---|---|---|
+| `algorithm.split.gamma_db` | `algorithm.gamma_db` | Hoisted to umbrella level; shared by every algorithm.  Old key is silently ignored by the loader. |
+| `simulation.n_trials` | *same key, now actively used* | Previously declared-but-unread; now decomposed into `(n_drops, n_realizations)` when CLI doesn't provide them. |
+| `sensing.sigma_clt: 0.1` | `sensing.sigma_clt: null` | Field is now `Optional[float]`.  `null` (default) means "derive σ_clt² from CNR".  Any explicit value is treated as an **override** — `σ_clt² = sigma_clt²`, ignoring `clutter_cnr_db`. |
+
+**The σ_clt change is the only one that can silently alter behavior**: an
+existing `default.json` with `"sigma_clt": 0.1` now pins σ_clt² to 0.01
+instead of deriving from `clutter_cnr_db`.  Set it to `null` (or remove
+the key) to keep the previous CNR-based semantics.
+
+To verify the migration: `python3 scripts/validate_stage9.py` should
+report 21/21 passed.
 
 ---
 

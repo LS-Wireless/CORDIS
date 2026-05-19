@@ -36,7 +36,7 @@ This expression decouples into:
   - Spatial STAP gain:          a_{a_r}^H R_{g_{a_r}}^{-1} a_{a_r}
 
 The Doppler (temporal) processing gain T is a multiplicative factor,
-so optimizing the spatial SCNR is equivalent to optimizing the full
+so optimising the spatial SCNR is equivalent to optimising the full
 joint STAP SCNR.
 
 Note: The optimization objective in CORDIS uses the clutter-aware linear
@@ -82,7 +82,7 @@ def compute_clutter_spatial_correlation(
     """
     Compute the spatial clutter covariance C_a ∈ C^{n_ant × n_ant} at AP a
     by integrating the steering vector outer product over the clutter angular
-    spread, modeled as a truncated Laplacian PAS.
+    spread, modelled as a truncated Laplacian PAS.
 
     C_a satisfies tr(C_a) = n_ant.
 
@@ -176,7 +176,7 @@ def compute_sensing_statistics(
     """
     Pre-compute sensing channel statistics for all AP-pair/target combinations.
 
-    Called once per topology realization.
+    Called once per topology realisation.
 
     Parameters
     ----------
@@ -200,9 +200,14 @@ def compute_sensing_statistics(
     spacing = t_cfg.antenna_spacing_factor
 
     sigma_rcs_sq = 10.0 ** (s_cfg.sigma_rcs_sq_db / 10.0)
-    # σ_clt^2 from CNR: CNR = σ_clt^2 / σ_n^2
     sigma_n_sq   = noise_power_watts(frq.bandwidth_hz, cfg.channel.noise_figure_db)
-    sigma_clt_sq = (10.0 ** (s_cfg.clutter_cnr_db / 10.0)) * sigma_n_sq
+    # σ_clt² selection (Stage 9 cleanup):
+    #   • sigma_clt is None (default)        → derive from CNR
+    #   • sigma_clt is an explicit float ≥ 0 → use it directly
+    if s_cfg.sigma_clt is None:
+        sigma_clt_sq = (10.0 ** (s_cfg.clutter_cnr_db / 10.0)) * sigma_n_sq
+    else:
+        sigma_clt_sq = float(s_cfg.sigma_clt) ** 2
 
     beta_bistatic_dict: Dict[Tuple[int, int, int], float] = {}
     a_tx_dict:          Dict[Tuple[int, int], NDArray]    = {}

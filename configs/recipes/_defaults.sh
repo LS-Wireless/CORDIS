@@ -75,7 +75,11 @@ SHADOW_CORR_DIST_M="${SHADOW_CORR_DIST_M:-50.0}"
 RX_STRATEGY="${RX_STRATEGY:-single_closest_centroid}"
 SIGMA_RCS_SQ_DB="${SIGMA_RCS_SQ_DB:--3.0}"
 N_SNAPSHOTS="${N_SNAPSHOTS:-20}"
+# Clutter — set CLUTTER_CNR_DB (default).  For unit tests or
+# noise-independent studies, set SIGMA_CLT to a numeric value (e.g.
+# "0.1") to override.  Leave SIGMA_CLT as "null" to use the CNR formula.
 CLUTTER_CNR_DB="${CLUTTER_CNR_DB:--10.0}"
+SIGMA_CLT="${SIGMA_CLT:-null}"
 CLUTTER_AS_DEG="${CLUTTER_AS_DEG:-15.0}"
 CLUTTER_CENTER_STRATEGY="${CLUTTER_CENTER_STRATEGY:-target_centroid}"
 CLUTTER_OFFSET_AZ_DEG="${CLUTTER_OFFSET_AZ_DEG:-60.0}"
@@ -84,8 +88,10 @@ LOS_PROBABILITY_OVERRIDE="${LOS_PROBABILITY_OVERRIDE:-null}"
 MAX_TX_APS_PER_TARGET="${MAX_TX_APS_PER_TARGET:-5}"
 MAX_RX_APS_PER_TARGET="${MAX_RX_APS_PER_TARGET:-3}"
 
+# ─── Algorithm — shared QoS target (γ_u for every algorithm) ─────────
+GAMMA_DB="${GAMMA_DB:-10.0}"
+
 # ─── Algorithm — CORDIS-Split ────────────────────────────────────────
-SPLIT_GAMMA_DB="${SPLIT_GAMMA_DB:-10.0}"
 SPLIT_EPSILON_REG="${SPLIT_EPSILON_REG:-0.01}"
 SPLIT_EPSILON_NSC="${SPLIT_EPSILON_NSC:-0.001}"
 SPLIT_KAPPA="${SPLIT_KAPPA:-1.0}"
@@ -100,7 +106,13 @@ ADMM_EPS_DUAL="${ADMM_EPS_DUAL:-0.001}"
 ADMM_XI_SLACK="${ADMM_XI_SLACK:-10000.0}"
 
 # ─── Simulation ──────────────────────────────────────────────────────
-N_TRIALS="${N_TRIALS:-500}"
+# Trial count can be set in two ways:
+#   • N_TRIALS  → auto-decomposed into closest factor pair (drops × real)
+#   • N_DROPS and N_REAL → explicit (export them at make-time, NOT here)
+# Both reach the launcher via env vars and the Python resolver picks one
+# (explicit drops×real beats n_trials).  See scripts/_exp_common.py
+# resolve_drops_real for the full precedence chain.
+N_TRIALS="${N_TRIALS:-100}"
 SEED="${SEED:-42}"
 N_JOBS="${N_JOBS:--1}"
 SAVE_DIR="${SAVE_DIR:-results/}"
@@ -142,6 +154,7 @@ SET_ARGS=(
     sensing.sigma_rcs_sq_db="$SIGMA_RCS_SQ_DB"
     sensing.n_snapshots="$N_SNAPSHOTS"
     sensing.clutter_cnr_db="$CLUTTER_CNR_DB"
+    sensing.sigma_clt="$SIGMA_CLT"
     sensing.clutter_as_deg="$CLUTTER_AS_DEG"
     sensing.clutter_center_strategy="$CLUTTER_CENTER_STRATEGY"
     sensing.clutter_offset_az_deg="$CLUTTER_OFFSET_AZ_DEG"
@@ -149,7 +162,7 @@ SET_ARGS=(
     sensing.los_probability_override="$LOS_PROBABILITY_OVERRIDE"
     sensing.max_tx_aps_per_target="$MAX_TX_APS_PER_TARGET"
     sensing.max_rx_aps_per_target="$MAX_RX_APS_PER_TARGET"
-    algorithm.split.gamma_db="$SPLIT_GAMMA_DB"
+    algorithm.gamma_db="$GAMMA_DB"
     algorithm.split.epsilon_reg="$SPLIT_EPSILON_REG"
     algorithm.split.epsilon_nsc="$SPLIT_EPSILON_NSC"
     algorithm.split.kappa="$SPLIT_KAPPA"

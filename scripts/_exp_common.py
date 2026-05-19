@@ -42,7 +42,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # Make sibling helpers importable when the script is run directly from
 # anywhere (not just from the scripts/ directory).
@@ -106,13 +106,116 @@ def build_base_parser(experiment_name: str) -> argparse.ArgumentParser:
 
 
 def add_drops_args(parser: argparse.ArgumentParser,
-                   default_n_drops: int = 20,
-                   default_n_real: int = 2) -> None:
-    """Add Monte-Carlo ``--n-drops`` / ``--n-realizations`` flags."""
+                   default_n_drops: Optional[int] = None,
+                   default_n_real:  Optional[int] = None) -> None:
+    """
+    Add Monte-Carlo trial-count flags.
+
+    Three knobs are exposed:
+
+    * ``--n-trials N``     total trial count (decomposes into drops × real)
+    * ``--n-drops D``      explicit drops (overrides decomposition)
+    * ``--n-realizations R``  explicit realizations (overrides decomposition)
+
+    Resolution precedence is handled by :func:`resolve_drops_real`:
+
+    1. If BOTH ``--n-drops`` and ``--n-realizations`` are explicit, use them.
+    2. Else if ``--n-trials`` is given, decompose into the two closest
+       factors (with the larger one assigned to realizations).
+    3. Else fall back to ``cfg.simulation.n_trials`` from the JSON config
+       and decompose.
+    4. Per-experiment defaults (``default_n_drops`` / ``default_n_real``)
+       are last-resort fallbacks for cases where no config is loadable.
+
+    Defaults are ``None`` (no implicit value) so that the resolver can
+    distinguish "user explicitly set this" from "fall through to
+    decomposition".
+    """
     parser.add_argument("--n-drops", type=int, default=default_n_drops,
-                        help="Independent topology drops.")
+                        help="Independent topology drops (overrides "
+                             "n_trials decomposition when set).")
     parser.add_argument("--n-realizations", type=int, default=default_n_real,
-                        help="Channel realisations per drop.")
+                        help="Channel realisations per drop (overrides "
+                             "n_trials decomposition when set).")
+    parser.add_argument("--n-trials", type=int, default=None,
+                        help="Total trial count.  Decomposed into drops × "
+                             "realizations using the two closest factors.  "
+                             "Falls back to cfg.simulation.n_trials.")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# n_trials decomposition
+# ─────────────────────────────────────────────────────────────────────
+
+def closest_factor_pair(n: int) -> Tuple[int, int]:
+    """
+    Return ``(a, b)`` with ``a * b == n``, ``a <= b``, and ``|b - a|`` minimal.
+
+    Examples
+    --------
+    >>> closest_factor_pair(400)   # 20 × 20
+    (20, 20)
+    >>> closest_factor_pair(500)   # 20 × 25
+    (20, 25)
+    >>> closest_factor_pair(100)   # 10 × 10
+    (10, 10)
+    >>> closest_factor_pair(13)    # 1 × 13  (prime → lopsided)
+    (1, 13)
+    """
+    import math
+    if n < 1:
+        raise ValueError(f"n must be >= 1, got {n}")
+    a = int(math.isqrt(n))
+    while a > 0 and n % a != 0:
+        a -= 1
+    return a, n // a
+
+
+def resolve_drops_real(args: argparse.Namespace,
+                       cfg_n_trials: Optional[int] = None,
+                       default_n_drops: int = 10,
+                       default_n_real:  int = 10) -> Tuple[int, int, str]:
+    """
+    Resolve ``(n_drops, n_realizations)`` from CLI args + config.
+
+    Returns a triple ``(n_drops, n_realizations, source)`` where ``source``
+    is a short string identifying which branch fired — useful for logging.
+
+    See :func:`add_drops_args` for the precedence chain.
+    """
+    log = logging.getLogger(__name__)
+    d, r = args.n_drops, args.n_realizations
+
+    # Branch 1: both explicit → trust the user.
+    if d is not None and r is not None:
+        return d, r, "explicit drops×real"
+
+    # Branch 2: CLI n-trials given, decompose around any explicit dim.
+    n_t = args.n_trials if args.n_trials is not None else cfg_n_trials
+
+    if n_t is not None and n_t > 0:
+        if d is not None:                              # only drops explicit
+            r = max(1, -(-n_t // d))                  # ceil(n_t / d)
+            return d, r, f"n_trials={n_t} with explicit drops={d}"
+        if r is not None:                              # only real explicit
+            d = max(1, -(-n_t // r))
+            return d, r, f"n_trials={n_t} with explicit real={r}"
+        # Neither explicit — pure decomposition.
+        a, b = closest_factor_pair(n_t)
+        if a == 1 and n_t > 4:
+            log.warning(
+                "n_trials=%d is prime — decomposed as (1, %d).  "
+                "Consider setting N_DROPS and N_REAL explicitly "
+                "for better Monte Carlo balance.", n_t, n_t,
+            )
+        return a, b, f"n_trials={n_t} decomposed → ({a}, {b})"
+
+    # Branch 3: nothing usable from CLI or config — last-resort defaults.
+    return (
+        default_n_drops if d is None else d,
+        default_n_real  if r is None else r,
+        "per-experiment fallback defaults",
+    )
 
 
 def add_cdf_args(parser: argparse.ArgumentParser,
@@ -216,6 +319,9 @@ def setup_logging(log_path: Path, verbosity: int = 0,
 def run_experiment(experiment_name: str,
                    args: argparse.Namespace,
                    experiment_kwargs: Optional[Dict[str, Any]] = None,
+                   *,
+                   fallback_n_drops: int = 10,
+                   fallback_n_real:  int = 10,
                    ) -> Path:
     """End-to-end: load cfg, build runner, run, save.
 
@@ -229,8 +335,13 @@ def run_experiment(experiment_name: str,
         per-experiment additions).
     experiment_kwargs
         Forwarded to the experiment's ``run_*`` function as **kwargs.
-        Typical contents: ``{"n_drops": ..., "n_realizations": ...}``
-        plus any sweep ranges or seeds the wrapper exposes.
+        Typical contents: sweep ranges, seeds.  ``n_drops`` and
+        ``n_realizations`` are resolved internally via
+        :func:`resolve_drops_real` and overridden in this dict.
+    fallback_n_drops, fallback_n_real
+        Per-experiment last-resort defaults used when neither CLI args
+        nor the JSON config provide a usable trial count.  Inlined into
+        each runner .py by the generator from the per-experiment metadata.
 
     Returns
     -------
@@ -238,7 +349,7 @@ def run_experiment(experiment_name: str,
         The experiment directory the result was saved to.
     """
     cordis = _import_cordis()
-    experiment_kwargs = experiment_kwargs or {}
+    experiment_kwargs = dict(experiment_kwargs or {})
 
     if experiment_name not in cordis["REGISTRY"]:
         raise KeyError(f"unknown experiment {experiment_name!r}; "
@@ -264,11 +375,24 @@ def run_experiment(experiment_name: str,
     log.info("Loading config base=%s exp=%s", args.base_config, args.exp_config)
     cfg = cordis["load_config"](args.base_config, args.exp_config)
 
-    # Build runner config.  n_drops / n_realizations live inside
-    # experiment_kwargs (each experiment knows its own defaults) — we
-    # only pass them through to the runner here.
-    n_drops = int(experiment_kwargs.get("n_drops", 20))
-    n_real  = int(experiment_kwargs.get("n_realizations", 2))
+    # Resolve trial counts via the precedence chain:
+    #   explicit drops×real → --n-trials → cfg.simulation.n_trials → fallback.
+    cfg_n_trials = getattr(getattr(cfg, "simulation", None), "n_trials", None)
+    n_drops, n_real, n_trials_source = resolve_drops_real(
+        args,
+        cfg_n_trials=cfg_n_trials,
+        default_n_drops=fallback_n_drops,
+        default_n_real=fallback_n_real,
+    )
+    log.info("Trial counts: n_drops=%d, n_realizations=%d  (%s)",
+             n_drops, n_real, n_trials_source)
+
+    # The registry's run_* functions take these as explicit kwargs; we
+    # override any caller-provided values with the resolved ones so
+    # there is one source of truth.
+    experiment_kwargs["n_drops"]        = n_drops
+    experiment_kwargs["n_realizations"] = n_real
+
     runner_cfg = cordis["RunnerConfig"](
         n_drops=n_drops,
         n_realizations_per_drop=n_real,

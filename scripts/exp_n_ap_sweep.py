@@ -33,22 +33,22 @@ from _exp_common import (    # noqa: E402
 
 def main() -> None:
     parser = build_base_parser("n_ap_sweep")
-    add_sweep_args(parser,
-                          default_n_drops=20,
-                          default_n_real=2)
+    add_sweep_args(parser)
     parser.add_argument("--n-ap-values", default='',
                         help="Comma- or space-separated AP counts (e.g. '4,6,8,10,12'). Empty → use registry default.")
     args = parser.parse_args()
 
     extra_kwargs = {
-        "n_drops":        args.n_drops,
-        "n_realizations": args.n_realizations,
         "n_ap_values": parse_value_list(args.n_ap_values, int) or None,
     }
     # Drop any None-valued sweep ranges so the registry uses its defaults.
     extra_kwargs = {k: v for k, v in extra_kwargs.items() if v is not None}
 
-    run_experiment("n_ap_sweep", args, extra_kwargs)
+    # Per-experiment fallback drops × real (used only if CLI args don't
+    # specify trial counts and config has no simulation.n_trials).
+    run_experiment("n_ap_sweep", args, extra_kwargs,
+                   fallback_n_drops=20,
+                   fallback_n_real=2)
 
 
 if __name__ == "__main__":

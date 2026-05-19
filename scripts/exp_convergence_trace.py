@@ -33,9 +33,7 @@ from _exp_common import (    # noqa: E402
 
 def main() -> None:
     parser = build_base_parser("convergence_trace")
-    add_drops_args(parser,
-                          default_n_drops=1,
-                          default_n_real=1)
+    add_drops_args(parser)
     parser.add_argument("--drop-seed", type=int, default=42,
                         help='Topology drop seed for the single trial.')
     parser.add_argument("--realization-seed", type=int, default=43,
@@ -45,8 +43,6 @@ def main() -> None:
     args = parser.parse_args()
 
     extra_kwargs = {
-        "n_drops":        args.n_drops,
-        "n_realizations": args.n_realizations,
         "drop_seed": args.drop_seed,
         "realization_seed": args.realization_seed,
         "n_admm_max": args.n_admm_max,
@@ -54,7 +50,11 @@ def main() -> None:
     # Drop any None-valued sweep ranges so the registry uses its defaults.
     extra_kwargs = {k: v for k, v in extra_kwargs.items() if v is not None}
 
-    run_experiment("convergence_trace", args, extra_kwargs)
+    # Per-experiment fallback drops × real (used only if CLI args don't
+    # specify trial counts and config has no simulation.n_trials).
+    run_experiment("convergence_trace", args, extra_kwargs,
+                   fallback_n_drops=1,
+                   fallback_n_real=1)
 
 
 if __name__ == "__main__":
