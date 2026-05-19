@@ -16,8 +16,15 @@ import logging
 import sys
 from pathlib import Path
 
-# Make sibling helpers importable.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Make `cordis` and the sibling `_plot_common` helpers importable when
+# this script is run directly (e.g. `python3 scripts/plot_scnr_cdf.py`).
+# The runner picks up this script's directory (scripts/) for siblings
+# AND its parent (the repo root) for the in-tree cordis package.
+_HERE      = Path(__file__).resolve().parent          # scripts/
+_REPO_ROOT = _HERE.parent                              # repo root
+sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_REPO_ROOT))
+
 from _plot_common import (   # noqa: E402
     build_plot_parser, load_result, save_paper_figure,
     resolve_output_dir, sweep_plot_pair,
