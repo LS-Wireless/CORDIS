@@ -81,7 +81,7 @@
     "admm": {
       "kappa": 1.0,
       "rho": 1.0,
-      "n_max": 50,
+      "n_max": 80,
       "eps_pri": 0.001,
       "eps_dual": 0.001,
       "xi_slack": 10000.0,
@@ -99,7 +99,7 @@
     }
   },
   "simulation": {
-    "n_trials": 200,
+    "n_trials": 100,
     "seed": 42,
     "n_jobs": -1,
     "save_dir": "results/",
