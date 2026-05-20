@@ -23,6 +23,9 @@ matching ``validate_stage<tag>.py``:
   non-existent ``save_paper_figure``)
 * **15** — AST-based call-signature validation for playground notebooks;
   catches wrong kwargs / arity / metric names before they ship
+* **16** — experiment-dispatch bug fixes: ``_set_field`` preserves int
+  destination types, ``sweep_config_field`` re-validates per point,
+  ``_exp_common.py`` filters ``n_drops``/``n_realizations`` by signature
 
 Each sub-validator is a self-contained script under ``scripts/``.  This
 runner invokes them via ``subprocess`` so each runs in its own process
@@ -62,6 +65,7 @@ SUBVALIDATORS: List[Tuple[str, str]] = [
     ("13", "validate_stage13.py"),
     ("14", "validate_stage14.py"),
     ("15", "validate_stage15.py"),
+    ("16", "validate_stage16.py"),
 ]
 
 

@@ -428,20 +428,24 @@ def run_experiment(experiment_name: str,
     log.info("Trial counts: n_drops=%d, n_realizations=%d  (%s)",
              n_drops, n_real, n_trials_source)
 
-    # The registry's run_* functions take these as explicit kwargs; we
-    # override any caller-provided values with the resolved ones so
-    # there is one source of truth.
-    experiment_kwargs["n_drops"]        = n_drops
-    experiment_kwargs["n_realizations"] = n_real
+    # Resolved trial counts are forwarded to the experiment's run_*
+    # function ONLY if it accepts them.  Sweep + CDF experiments take
+    # them as explicit kwargs; convergence_trace and fronthaul_table
+    # have fixed setups and don't.  Mirrors the signature-inspection
+    # pattern used below for --specs.
+    import inspect as _inspect
+    fn = cordis["REGISTRY"][experiment_name]
+    sig = _inspect.signature(fn)
+    if "n_drops" in sig.parameters:
+        experiment_kwargs["n_drops"] = n_drops
+    if "n_realizations" in sig.parameters:
+        experiment_kwargs["n_realizations"] = n_real
 
     # Forward --specs IFF the experiment's run_* function accepts it.
     # convergence_trace and fronthaul_table don't take a spec_set kwarg
     # (their algorithm choice is fixed by design), so we silently skip
     # them rather than crash on a TypeError.
     if hasattr(args, "specs") and args.specs is not None:
-        import inspect as _inspect
-        fn = cordis["REGISTRY"][experiment_name]
-        sig = _inspect.signature(fn)
         if "spec_set" in sig.parameters:
             experiment_kwargs["spec_set"] = args.specs
             log.info("spec_set=%s", args.specs)

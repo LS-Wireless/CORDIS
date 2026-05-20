@@ -87,10 +87,24 @@ def _set_field(obj: Any, path: str, value: Any) -> None:
     """
     Set a nested attribute by dotted path: ``obj.a.b.c = value``.
 
+    The field's existing type is preserved when possible.  Specifically,
+    if the destination field currently holds an ``int`` (and is not a
+    ``bool``), a ``float`` value is cast to ``int`` — provided the
+    float is whole-valued (e.g. ``4.0`` → ``4``).  Non-integer floats
+    targeting an int field raise ``TypeError`` rather than silently
+    rounding.  Sweep axes store values as floats (for plotting and
+    sorting) but downstream simulation code may need an ``int``
+    (e.g. ``topology.n_ap``, ``topology.n_ant``); this method bridges
+    the two without forcing the caller to know which.
+
     Raises
     ------
     AttributeError
         If any intermediate attribute does not exist on ``obj``.
+    ValueError
+        On empty path.
+    TypeError
+        Setting a non-integer float (e.g. ``4.5``) into an int field.
     """
     parts = path.split(".")
     if not parts or not all(parts):
@@ -98,7 +112,24 @@ def _set_field(obj: Any, path: str, value: Any) -> None:
     cursor = obj
     for p in parts[:-1]:
         cursor = getattr(cursor, p)
-    setattr(cursor, parts[-1], value)
+    leaf = parts[-1]
+
+    # Type-preserving cast: int destination ← float value.
+    try:
+        existing = getattr(cursor, leaf)
+    except AttributeError:
+        existing = None
+    if existing is not None \
+            and isinstance(existing, int) and not isinstance(existing, bool) \
+            and isinstance(value, float):
+        if not value.is_integer():
+            raise TypeError(
+                f"Cannot set integer field {path!r} to non-integer "
+                f"value {value!r}"
+            )
+        value = int(value)
+
+    setattr(cursor, leaf, value)
 
 
 def _get_field(obj: Any, path: str) -> Any:
@@ -157,6 +188,21 @@ def sweep_config_field(
     for v in axis.values:
         cfg = copy.deepcopy(base_cfg)
         _set_field(cfg, field_path, v)
+        # Re-validate the swept config: SimConfig.validate() was called
+        # once at load time, but the swept field can violate constraints
+        # (e.g. n_ant sweep dropping below the fixed n_rf_chains).  Fail
+        # fast at the sweep point that breaks rather than silently
+        # producing empty results from per-drop build failures.
+        if hasattr(cfg, "validate"):
+            try:
+                cfg.validate()
+            except Exception as e:
+                raise type(e)(
+                    f"Sweep point {axis.name}={v!r} produced an invalid "
+                    f"config: {e}.  Adjust the sweep range or the related "
+                    f"fixed parameters (e.g. raise n_ant or lower "
+                    f"n_rf_chains)."
+                ) from e
         logger.info("Sweep %s = %g (config-field %s)", axis.name, v, field_path)
         runner = runner_cls(cfg, specs, runner_cfg)
         report = runner.run()
