@@ -37,6 +37,7 @@ def plot_admm_convergence(
     log_y: bool = True,
     title: Optional[str] = None,
     show_best_iter: bool = True,
+    legend_loc: str = "best",
 ) -> Tuple[Axes, Axes]:
     """
     Plot ADMM primal/dual residuals and SOC slack vs iteration.
@@ -57,6 +58,12 @@ def plot_admm_convergence(
     show_best_iter : bool
         If the result has ``best_iter`` set, mark it with a vertical
         dotted line on both panels.
+    legend_loc : str
+        Legend location (matplotlib convention).  Default ``"best"``
+        lets matplotlib auto-pick the corner with least overlap.
+        Override (e.g. ``"upper right"``) for series of figures where
+        a consistent corner across panels matters more than minimal
+        overlap.
 
     Returns
     -------
@@ -86,7 +93,7 @@ def plot_admm_convergence(
     ax_res.set_xlabel("Iteration")
     ax_res.set_ylabel("Residual")
     ax_res.grid(True, alpha=0.3)
-    ax_res.legend(loc="upper right")
+    ax_res.legend(loc=legend_loc)
 
     # Slack panel — only if slack_history is present.
     slack_hist = getattr(admm_result, "slack_history", None)
@@ -104,7 +111,7 @@ def plot_admm_convergence(
         ax_slack.set_xlabel("Iteration")
         ax_slack.set_ylabel("SOC slack")
         ax_slack.grid(True, alpha=0.3)
-        ax_slack.legend(loc="upper right")
+        ax_slack.legend(loc=legend_loc)
     else:
         ax_slack.text(0.5, 0.5, "slack_history not available",
                       ha="center", va="center",

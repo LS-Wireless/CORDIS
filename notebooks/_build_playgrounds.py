@@ -108,10 +108,10 @@ GENERIC_FIGSIZE_CELL = code(
 GENERIC_SAVE_CELL = code(
     "# Save with provenance metadata (Git SHA, creation date, etc. — embedded",
     "# into the PDF's metadata, prepended as comments in the .pgf).",
-    "from cordis.plotting import save_paper_figure",
+    "from cordis.plotting import save_figure",
     "",
     "# Adjust EXPERIMENT and metric labels to match the figure above.",
-    "out = save_paper_figure(",
+    "out = save_figure(",
     "    fig,",
     "    base_path=f'../figures/playground/{EXPERIMENT}_demo',",
     "    formats=('pdf', 'png'),       # add 'pgf' on systems with LaTeX",

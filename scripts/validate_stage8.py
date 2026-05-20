@@ -18,6 +18,9 @@ matching ``validate_stage<tag>.py``:
 * **11** — UCI HPC3 site-specific SLURM scripts (``scripts/slurm/uci-hpc3/``)
 * **12** — playground notebooks (one per result kind, under ``notebooks/``)
 * **13** — HPC3-to-laptop sync script (``scripts/sync_results_from_hpc3.sh``)
+* **14** — plotting fixes: ``plot_cdf``/``plot_admm_convergence`` default
+  to ``legend_loc="best"``; notebooks use ``save_figure`` (not the
+  non-existent ``save_paper_figure``)
 
 Each sub-validator is a self-contained script under ``scripts/``.  This
 runner invokes them via ``subprocess`` so each runs in its own process
@@ -55,6 +58,7 @@ SUBVALIDATORS: List[Tuple[str, str]] = [
     ("11", "validate_stage11.py"),
     ("12", "validate_stage12.py"),
     ("13", "validate_stage13.py"),
+    ("14", "validate_stage14.py"),
 ]
 
 

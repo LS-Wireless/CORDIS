@@ -35,7 +35,7 @@ def plot_cdf(
     xlabel: Optional[str] = None,
     ylabel: str = "Empirical CDF",
     title: Optional[str] = None,
-    legend_loc: str = "lower right",
+    legend_loc: str = "best",
     only: Optional[Sequence[str]] = None,
     grid: bool = True,
 ) -> Axes:
@@ -56,7 +56,12 @@ def plot_cdf(
     xlabel, ylabel, title : str, optional
         Axis labels.  ``xlabel`` defaults to the metric name.
     legend_loc : str
-        Legend location (matplotlib convention).
+        Legend location (matplotlib convention).  Default ``"best"``
+        lets matplotlib pick the corner with least overlap, which
+        works well when curves cluster near the right edge (high-SNR
+        experiments).  Override with ``"lower right"`` when you want
+        a fixed corner — exploiting the fact that any CDF passes
+        through (xmin, 0), so lower-right is mathematically empty.
     only : sequence of algorithm names, optional
         Restrict the plot to a subset of algorithms.
     grid : bool
