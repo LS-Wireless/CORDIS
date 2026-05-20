@@ -21,6 +21,8 @@ matching ``validate_stage<tag>.py``:
 * **14** — plotting fixes: ``plot_cdf``/``plot_admm_convergence`` default
   to ``legend_loc="best"``; notebooks use ``save_figure`` (not the
   non-existent ``save_paper_figure``)
+* **15** — AST-based call-signature validation for playground notebooks;
+  catches wrong kwargs / arity / metric names before they ship
 
 Each sub-validator is a self-contained script under ``scripts/``.  This
 runner invokes them via ``subprocess`` so each runs in its own process
@@ -59,6 +61,7 @@ SUBVALIDATORS: List[Tuple[str, str]] = [
     ("12", "validate_stage12.py"),
     ("13", "validate_stage13.py"),
     ("14", "validate_stage14.py"),
+    ("15", "validate_stage15.py"),
 ]
 
 
