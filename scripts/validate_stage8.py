@@ -17,6 +17,7 @@ matching ``validate_stage<tag>.py``:
 * **10** — named spec-set selection (``--specs`` CLI flag across all experiments)
 * **11** — UCI HPC3 site-specific SLURM scripts (``scripts/slurm/uci-hpc3/``)
 * **12** — playground notebooks (one per result kind, under ``notebooks/``)
+* **13** — HPC3-to-laptop sync script (``scripts/sync_results_from_hpc3.sh``)
 
 Each sub-validator is a self-contained script under ``scripts/``.  This
 runner invokes them via ``subprocess`` so each runs in its own process
@@ -53,6 +54,7 @@ SUBVALIDATORS: List[Tuple[str, str]] = [
     ("10", "validate_stage10.py"),
     ("11", "validate_stage11.py"),
     ("12", "validate_stage12.py"),
+    ("13", "validate_stage13.py"),
 ]
 
 

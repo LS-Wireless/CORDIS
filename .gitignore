@@ -142,6 +142,7 @@ eval/datasets/
 # Stage 8 — experiment outputs (regenerated, never committed)
 results/exp_*/
 figures/exp_*/
+figures/playground/
 
 # Keep the .gitkeep placeholder so the figures/ dir exists after clone
 !figures/.gitkeep

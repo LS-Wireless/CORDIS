@@ -226,6 +226,43 @@ algorithms are present in the saved result, so changing `SPECS` just
 changes which curves appear without any plot-script edits. The
 saved `manifest.json` records which spec set was used.
 
+## Syncing cluster results to laptop (Stage 13)
+
+After a SLURM job finishes on HPC3, pull the new results to your
+laptop with one command:
+
+```bash
+# Preview first (recommended for big pulls):
+bash scripts/sync_results_from_hpc3.sh --dry-run
+
+# Pull every experiment:
+bash scripts/sync_results_from_hpc3.sh
+
+# Pull just one experiment:
+bash scripts/sync_results_from_hpc3.sh exp_sinr_cdf
+
+# Full --help:
+bash scripts/sync_results_from_hpc3.sh --help
+```
+
+Safety properties:
+
+- **One-way only** — pulls from HPC3 to laptop; never uploads.
+- **Additive by default** — laptop-only result folders are preserved.
+  The `--delete` flag opts in to mirror-style sync (use with `--dry-run`
+  first; will delete laptop folders missing on the cluster).
+- **Idempotent** — running twice is harmless; only changed files
+  transfer thanks to rsync's deltas.
+
+The script assumes `ssh hpc3` works via your `~/.ssh/config` (host
+alias + key auth).  Override the host or repo path via env vars for
+collaborators on different setups:
+
+```bash
+HPC3_HOST=hpc3-alt HPC3_REPO=/pub/alice/CORDIS \
+    bash scripts/sync_results_from_hpc3.sh exp_sinr_cdf
+```
+
 ## Plot playgrounds (Stage 12)
 
 For interactive plot styling — beyond what `make plot-*` produces — open
