@@ -393,6 +393,55 @@ def test_10_trace_roundtrip_preserves_diag_fields():
         )
 
 
+@_register("Test 12: no bare Unicode in matplotlib label/title/xlabel/ylabel "
+           "calls (would crash under LaTeX rendering)")
+def test_12_no_bare_unicode_in_mpl_labels():
+    """When ``setup_paper_style(use_latex=True)`` is active (the default),
+    matplotlib pipes axis labels and legend strings through real LaTeX,
+    which can't render bare Unicode like ``ε`` or ``γ``.  Result:
+    ``RuntimeError: latex was not able to process the following string``.
+
+    The fix is to use LaTeX math mode for symbols
+    (``$\\varepsilon_u$``, ``$\\gamma$``, etc.) and keep plain ASCII for
+    surrounding prose.  This test scans every code cell in every
+    playground notebook for ``set_xlabel`` / ``set_ylabel`` /
+    ``set_title`` / ``label=`` / ``suptitle`` lines and flags any with
+    non-ASCII characters.
+
+    The user reported this against the per-user diagnostic 4b cell
+    (``ε_u`` in slack ylabel, ``γ`` in axhline label); both were
+    legitimate bugs at LaTeX-enabled render time."""
+    import json as _json
+    label_callers = ("set_xlabel", "set_ylabel", "set_title",
+                     "label=", "suptitle")
+    offenders = []
+    for nb in _NOTEBOOKS:
+        nb_path = REPO_ROOT / "notebooks" / nb
+        nb_json = _json.loads(nb_path.read_text())
+        for cell_i, cell in enumerate(nb_json["cells"]):
+            if cell["cell_type"] != "code":
+                continue
+            src = "".join(cell["source"])
+            for line_num, line in enumerate(src.splitlines(), 1):
+                if not any(kw in line for kw in label_callers):
+                    continue
+                non_ascii = sorted({c for c in line if ord(c) > 127})
+                if non_ascii:
+                    offenders.append((nb, cell_i, line_num,
+                                     non_ascii, line.strip()))
+    assert not offenders, (
+        f"found {len(offenders)} matplotlib label line(s) with bare "
+        f"Unicode (would crash under LaTeX rendering):\n  "
+        + "\n  ".join(
+            f"{nb} cell {ci} line {ln}: {chars}\n    {line}"
+            for nb, ci, ln, chars, line in offenders
+        )
+        + "\n\nFix: use LaTeX math mode in raw strings — e.g. "
+          r"r'$\gamma$' and r'$\varepsilon_u$' — and keep ASCII "
+          "for surrounding prose."
+    )
+
+
 @_register("Test 11: legacy trace (without extended fields) loads with "
            "graceful defaults, not AttributeError")
 def test_11_legacy_trace_loads():
