@@ -186,6 +186,47 @@ def _get_n_ue(cfg: Any, default: int = 4) -> int:
         return default
 
 
+def _admm_kwargs_from_cfg(cfg: Any) -> Dict[str, Any]:
+    """Extract the ADMM-tunable kwargs that ``admm_spec()`` accepts
+    from ``cfg.algorithm.admm.*``.
+
+    Without this, ``admm_spec()`` silently falls back to its
+    function-level defaults (``DEFAULT_KAPPA``, ``DEFAULT_RHO_ADMM``,
+    ``DEFAULT_N_ADMM_MAX``) — meaning the user's
+    ``cfg.algorithm.admm.kappa``, ``.rho``, ``.n_max`` settings are
+    ignored entirely.  This was a user-visible bug: tuning κ or ρ in
+    the JSON config had **zero** effect on CORDIS-ADMM behaviour while
+    Centralized (which reads ``cfg.algorithm.admm.kappa`` directly)
+    responded as expected.
+
+    Caller pattern (every run_* function that builds specs)::
+
+        for k, v in _admm_kwargs_from_cfg(cfg).items():
+            spec_kwargs.setdefault(k, v)
+        # specs = factory(**spec_kwargs)   (factory call follows)
+
+    ``setdefault`` is critical: explicit per-call kwargs (e.g. the
+    swept value in ``run_kappa_sweep``) MUST still win over the cfg
+    default.
+    """
+    out: Dict[str, Any] = {}
+    try:
+        admm = cfg.algorithm.admm
+    except AttributeError:
+        return out
+    # Map from cfg attribute names → admm_spec() kwarg names.  The cfg
+    # uses ``rho`` and ``n_max`` (shorter inside the admm namespace);
+    # admm_spec accepts ``rho_admm`` and ``n_admm_max`` (disambiguated).
+    for cfg_attr, spec_kw, cast in (
+        ("kappa",    "kappa",      float),
+        ("rho",      "rho_admm",   float),
+        ("n_max",    "n_admm_max", int),
+    ):
+        if hasattr(admm, cfg_attr):
+            out[spec_kw] = cast(getattr(admm, cfg_attr))
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────
 #  Single-config experiments
 # ─────────────────────────────────────────────────────────────────────
@@ -202,6 +243,10 @@ def run_sinr_cdf(
     factory = _resolve_spec_set(spec_set)
     spec_kwargs = spec_kwargs or {}
     spec_kwargs.setdefault("n_ue", _get_n_ue(cfg))
+    # Forward cfg.algorithm.admm.* defaults so user config takes effect
+    # in admm_spec; explicit per-call kwargs still win via setdefault.
+    for _k, _v in _admm_kwargs_from_cfg(cfg).items():
+        spec_kwargs.setdefault(_k, _v)
     specs = factory(**spec_kwargs)
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
@@ -232,6 +277,10 @@ def run_scnr_cdf(
     factory = _resolve_spec_set(spec_set)
     spec_kwargs = spec_kwargs or {}
     spec_kwargs.setdefault("n_ue", _get_n_ue(cfg))
+    # Forward cfg.algorithm.admm.* defaults so user config takes effect
+    # in admm_spec; explicit per-call kwargs still win via setdefault.
+    for _k, _v in _admm_kwargs_from_cfg(cfg).items():
+        spec_kwargs.setdefault(_k, _v)
     specs = factory(**spec_kwargs)
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
@@ -275,9 +324,12 @@ def run_gamma_sweep(
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
+    _factory_extra = {"n_ue": _get_n_ue(cfg)}
+    for _k, _v in _admm_kwargs_from_cfg(cfg).items():
+        _factory_extra.setdefault(_k, _v)
     results = sweep_spec_factory(
         cfg, factory, "gamma_u_db", axis, rc,
-        n_ue=_get_n_ue(cfg),
+        **_factory_extra,
     )
     return ExperimentResult(
         name="gamma_sweep", kind="sweep",
@@ -329,7 +381,10 @@ def run_kappa_sweep(
     results: Dict[float, Any] = {}
     for k in axis.values:
         cfg_v = _override_cfg(cfg, **{"algorithm.admm.kappa": float(k)})
-        specs = factory(n_ue=n_ue, kappa=float(k))
+        _kw = {"n_ue": n_ue, "kappa": float(k)}
+        for _k, _v in _admm_kwargs_from_cfg(cfg).items():
+            _kw.setdefault(_k, _v)
+        specs = factory(**_kw)
         sr = _run_single(cfg_v, rc, specs)
         results[float(k)] = sr
 
@@ -365,7 +420,10 @@ def run_snr_sweep(
         display="SNR [dB]",
         unit="dB",
     )
-    specs = factory(n_ue=_get_n_ue(cfg))
+    _kw = {"n_ue": _get_n_ue(cfg)}
+    for _k, _v in _admm_kwargs_from_cfg(cfg).items():
+        _kw.setdefault(_k, _v)
+    specs = factory(**_kw)
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
@@ -407,7 +465,10 @@ def run_clutter_cnr_sweep(
         display="Clutter CNR [dB]",
         unit="dB",
     )
-    specs = factory(n_ue=_get_n_ue(cfg))
+    _kw = {"n_ue": _get_n_ue(cfg)}
+    for _k, _v in _admm_kwargs_from_cfg(cfg).items():
+        _kw.setdefault(_k, _v)
+    specs = factory(**_kw)
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
@@ -451,7 +512,10 @@ def run_n_ue_sweep(
     for n_ue in axis.values:
         n_ue_int = int(n_ue)
         cfg_v = _override_cfg(cfg, **{field_path: n_ue_int})
-        specs = factory(n_ue=n_ue_int)
+        _kw = {"n_ue": n_ue_int}
+        for _k, _v in _admm_kwargs_from_cfg(cfg).items():
+            _kw.setdefault(_k, _v)
+        specs = factory(**_kw)
         sr = _run_single(cfg_v, rc, specs)
         results[float(n_ue)] = sr
     return ExperimentResult(
@@ -482,7 +546,10 @@ def run_n_ap_sweep(
         values=[float(v) for v in n_ap_values],
         display=r"$N_{\rm AP}$",
     )
-    specs = factory(n_ue=_get_n_ue(cfg))
+    _kw = {"n_ue": _get_n_ue(cfg)}
+    for _k, _v in _admm_kwargs_from_cfg(cfg).items():
+        _kw.setdefault(_k, _v)
+    specs = factory(**_kw)
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
@@ -515,7 +582,10 @@ def run_antennas_sweep(
         values=[float(v) for v in n_ant_values],
         display=r"$M$",
     )
-    specs = factory(n_ue=_get_n_ue(cfg))
+    _kw = {"n_ue": _get_n_ue(cfg)}
+    for _k, _v in _admm_kwargs_from_cfg(cfg).items():
+        _kw.setdefault(_k, _v)
+    specs = factory(**_kw)
     rc = _override_runner(runner_cfg,
                           n_drops=n_drops,
                           n_realizations_per_drop=n_realizations)
@@ -555,6 +625,9 @@ def run_convergence_trace(
     spec_kwargs = spec_kwargs or {}
     spec_kwargs.setdefault("n_ue", _get_n_ue(cfg))
     spec_kwargs.setdefault("n_admm_max", n_admm_max)
+    # Forward cfg.algorithm.admm.* defaults; explicit kwargs above still win.
+    for _k, _v in _admm_kwargs_from_cfg(cfg).items():
+        spec_kwargs.setdefault(_k, _v)
     spec_obj = admm_spec(**spec_kwargs)
 
     scenario = build_scenario_from_seeds(
@@ -658,7 +731,10 @@ def run_fronthaul_table(
     holds the per-solve multiplier.
     """
     # 1. Estimate average ADMM iterations.
-    specs = [admm_spec(n_ue=_get_n_ue(cfg))]
+    _kw = {"n_ue": _get_n_ue(cfg)}
+    for _k, _v in _admm_kwargs_from_cfg(cfg).items():
+        _kw.setdefault(_k, _v)
+    specs = [admm_spec(**_kw)]
     rc = _override_runner(runner_cfg,
                           n_drops=n_admm_drops,
                           n_realizations_per_drop=n_realizations)
