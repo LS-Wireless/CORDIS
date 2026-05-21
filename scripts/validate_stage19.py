@@ -115,24 +115,31 @@ def test_01_helper_exists():
     )
 
 
-@_register("Test  2: helper extracts kappa, rho_admm, n_admm_max from cfg")
+@_register("Test  2: helper extracts all six admm-tunable knobs from cfg "
+           "(kappa, rho_admm, n_admm_max, eps_pri, eps_dual, xi_slack)")
 def test_02_helper_extracts_all_three():
     reg = _load_registry_module()
     from types import SimpleNamespace
     cfg = SimpleNamespace(
         algorithm=SimpleNamespace(
-            admm=SimpleNamespace(kappa=2.5, rho=0.5, n_max=300),
+            admm=SimpleNamespace(
+                kappa=2.5, rho=0.5, n_max=300,
+                eps_pri=5e-4, eps_dual=7e-4, xi_slack=2e3,
+            ),
         ),
     )
     kw = reg._admm_kwargs_from_cfg(cfg)
-    expected = {"kappa": 2.5, "rho_admm": 0.5, "n_admm_max": 300}
+    expected = {
+        "kappa": 2.5, "rho_admm": 0.5, "n_admm_max": 300,
+        "eps_pri": 5e-4, "eps_dual": 7e-4, "xi_slack": 2e3,
+    }
     assert kw == expected, (
-        f"_admm_kwargs_from_cfg should extract all three knobs the user "
+        f"_admm_kwargs_from_cfg should extract all six knobs the user "
         f"can set in cfg.algorithm.admm.  Got: {kw}\nExpected: {expected}"
     )
     # Type promises.
-    assert isinstance(kw["kappa"], float)
-    assert isinstance(kw["rho_admm"], float)
+    for k in ("kappa", "rho_admm", "eps_pri", "eps_dual", "xi_slack"):
+        assert isinstance(kw[k], float), f"{k} should be float, got {type(kw[k])}"
     assert isinstance(kw["n_admm_max"], int)
 
 
@@ -261,20 +268,22 @@ def test_06_no_naked_factory_calls():
 # ─────────────────────────────────────────────────────────────────────────────
 
 @_register("Test  7: end-to-end — admm_spec() with cfg-forwarded kwargs "
-           "carries non-default kappa/rho_admm/n_admm_max into spec.params")
+           "carries non-default kappa/rho/n_max/eps_pri/eps_dual/xi_slack "
+           "into spec.params")
 def test_07_end_to_end_spec_params():
     """The user's original test: set cfg.algorithm.admm.kappa=2.5 and
     verify the algorithm actually uses 2.5, not the hardcoded default.
-
-    Lock-in for the prime symptom.  Pure construction; no algorithm
-    execution needed (we just check that the kappa value lands in
-    spec.params where the dispatcher will read it from)."""
+    Extended to cover all six fields after Stage 19b audit (eps_pri,
+    eps_dual, xi_slack were caught by the same audit pattern)."""
     reg = _load_registry_module()
     admm_spec = _load_admm_spec()
     from types import SimpleNamespace
     cfg = SimpleNamespace(
         algorithm=SimpleNamespace(
-            admm=SimpleNamespace(kappa=2.5, rho=0.5, n_max=300),
+            admm=SimpleNamespace(
+                kappa=2.5, rho=0.5, n_max=300,
+                eps_pri=5e-4, eps_dual=7e-4, xi_slack=2e3,
+            ),
         ),
     )
     # Simulate what e.g. run_sinr_cdf now does internally.
@@ -283,14 +292,52 @@ def test_07_end_to_end_spec_params():
         spec_kwargs.setdefault(k, v)
     spec = admm_spec(**spec_kwargs)
     p = spec.params
-    assert p["kappa"]      == 2.5,  f"kappa: got {p['kappa']!r}, expected 2.5"
-    assert p["rho_admm"]   == 0.5,  f"rho_admm: got {p['rho_admm']!r}, expected 0.5"
-    assert p["n_admm_max"] == 300,  f"n_admm_max: got {p['n_admm_max']!r}, expected 300"
+    checks = (
+        ("kappa",       2.5),
+        ("rho_admm",    0.5),
+        ("n_admm_max",  300),
+        ("eps_pri",     5e-4),
+        ("eps_dual",    7e-4),
+        ("xi_slack",    2e3),
+    )
+    for key, expected in checks:
+        assert p[key] == expected, (
+            f"{key}: got {p[key]!r}, expected {expected!r}"
+        )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Runner
-# ─────────────────────────────────────────────────────────────────────────────
+@_register("Test  8: dispatcher (_dispatch_cordis_admm) declares "
+           "eps_pri/eps_dual/xi_slack in its fwd_keys list (so spec.params "
+           "actually reach the algorithm)")
+def test_08_dispatcher_fwd_keys():
+    """The full chain is cfg → spec.params → fwd_keys filter →
+    solve_cordis_admm kwargs.  Stage 19 fixed the cfg → spec.params step;
+    this test locks in that fwd_keys includes the new fields, so the
+    spec.params hop actually reaches the algorithm.
+
+    Source-grep is sufficient because the fwd_keys tuple is a literal in
+    cordis/simulation/scenario.py."""
+    src = (REPO_ROOT / "cordis" / "simulation" / "scenario.py").read_text()
+    # Find the _dispatch_cordis_admm function body.
+    m = re.search(
+        r"def\s+_dispatch_cordis_admm\s*\(.*?(?=^def\s+\w)",
+        src, re.M | re.S,
+    )
+    assert m, "could not locate _dispatch_cordis_admm in scenario.py"
+    body = m.group(0)
+    # Extract the fwd_keys tuple text.
+    fk = re.search(r"fwd_keys\s*=\s*\(\s*([^)]+)\)", body, re.S)
+    assert fk, "could not locate fwd_keys tuple in _dispatch_cordis_admm"
+    fwd_keys_text = fk.group(1)
+    required = ("kappa", "rho_admm", "n_admm_max",
+                "eps_pri", "eps_dual", "xi_slack")
+    missing = [k for k in required if f'"{k}"' not in fwd_keys_text]
+    assert not missing, (
+        f"_dispatch_cordis_admm.fwd_keys is missing: {missing}.  Even if "
+        f"spec.params carries these (Stage 19), they won't reach "
+        f"solve_cordis_admm without the dispatcher forwarding them.  "
+        f"Current fwd_keys text:\n{fwd_keys_text}"
+    )
 
 def main() -> int:
     print("=" * 78)

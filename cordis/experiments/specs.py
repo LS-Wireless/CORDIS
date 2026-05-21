@@ -121,6 +121,8 @@ DEFAULT_KAPPA       = 1.0     # matches cfg.algorithm.admm.kappa
 DEFAULT_RHO_ADMM    = 1.0     # matches cfg.algorithm.admm.rho
 DEFAULT_N_ADMM_MAX  = 50      # matches cfg.algorithm.admm.n_max
 DEFAULT_XI_SLACK    = 1e4     # matches cfg.algorithm.admm.xi_slack
+DEFAULT_EPS_PRI     = 1e-3    # matches cfg.algorithm.admm.eps_pri
+DEFAULT_EPS_DUAL    = 1e-3    # matches cfg.algorithm.admm.eps_dual
 
 # Sentinel used by spec builders.  ``gamma_u_db=None`` means "use the
 # value from cfg.algorithm.gamma_db at solver invocation time" — i.e.
@@ -183,17 +185,27 @@ def admm_spec(
     kappa:      float = DEFAULT_KAPPA,
     rho_admm:   float = DEFAULT_RHO_ADMM,
     n_admm_max: int   = DEFAULT_N_ADMM_MAX,
+    eps_pri:    float = DEFAULT_EPS_PRI,
+    eps_dual:   float = DEFAULT_EPS_DUAL,
+    xi_slack:   float = DEFAULT_XI_SLACK,
     **ignored,
 ) -> AlgorithmSpec:
     """CORDIS-ADMM (Algorithm 2): decentralised consensus-ADMM.
 
     Note
     ----
-    ``kappa``, ``rho_admm`` and ``n_admm_max`` are placed explicitly in
-    spec.params because the Stage-7 dispatcher does NOT read these from
-    ``cfg.algorithm.admm.*``.  Without them, ``solve_cordis_admm``
-    would silently fall back to its function-level defaults
-    (kappa=0.0 in particular — the Stage-7 ADMM-with-κ=0 bug).
+    ``kappa``, ``rho_admm``, ``n_admm_max``, ``eps_pri``, ``eps_dual``
+    and ``xi_slack`` are placed explicitly in spec.params because the
+    Stage-7 dispatcher does NOT read these from ``cfg.algorithm.admm.*``.
+    Without them, ``solve_cordis_admm`` would silently fall back to its
+    function-level defaults (Stage 19 originally caught this for
+    kappa/rho_admm/n_admm_max; Stage 19b extends to eps_pri/eps_dual/
+    xi_slack on the same audit).
+
+    The ``_admm_kwargs_from_cfg(cfg)`` helper in
+    ``cordis/experiments/registry.py`` extracts these from
+    ``cfg.algorithm.admm.*`` for every ``run_*`` function so user
+    config takes effect.
     """
     return AlgorithmSpec(
         name=_DISPLAY["admm"],
@@ -203,8 +215,12 @@ def admm_spec(
             "kappa":       float(kappa),
             "rho_admm":    float(rho_admm),
             "n_admm_max":  int(n_admm_max),
-            # xi_slack / slack_tol / eps_pri / eps_dual / warm_start_from_split
-            # deliberately NOT included — see module docstring.
+            "eps_pri":     float(eps_pri),
+            "eps_dual":    float(eps_dual),
+            "xi_slack":    float(xi_slack),
+            # slack_tol / warm_start_from_split deliberately NOT included
+            # — slack_tol has no cfg counterpart; warm_start_from_split is
+            # a dead config field (algorithm always warm-starts internally).
         },
     )
 

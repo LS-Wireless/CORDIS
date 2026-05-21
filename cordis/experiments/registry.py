@@ -217,10 +217,14 @@ def _admm_kwargs_from_cfg(cfg: Any) -> Dict[str, Any]:
     # Map from cfg attribute names → admm_spec() kwarg names.  The cfg
     # uses ``rho`` and ``n_max`` (shorter inside the admm namespace);
     # admm_spec accepts ``rho_admm`` and ``n_admm_max`` (disambiguated).
+    # The other three (eps_pri/eps_dual/xi_slack) keep the same name.
     for cfg_attr, spec_kw, cast in (
         ("kappa",    "kappa",      float),
         ("rho",      "rho_admm",   float),
         ("n_max",    "n_admm_max", int),
+        ("eps_pri",  "eps_pri",    float),
+        ("eps_dual", "eps_dual",   float),
+        ("xi_slack", "xi_slack",   float),
     ):
         if hasattr(admm, cfg_attr):
             out[spec_kw] = cast(getattr(admm, cfg_attr))
