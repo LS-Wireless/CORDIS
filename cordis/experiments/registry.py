@@ -722,7 +722,7 @@ def run_fronthaul_table(
         metadata={
             "M": M, "n_ue": n_ue, "n_targets": n_tg, "n_streams": n_streams,
             "admm_avg_iters": admm_avg_iters,
-            "admm_per_iter_real_scalars": admm_per_iter,
+            "admm_per_round_real_scalars": admm_per_round,
             "n_admm_drops": n_admm_drops,
             "n_realizations": n_realizations,
             "cfg_summary": _cfg_summary(cfg),

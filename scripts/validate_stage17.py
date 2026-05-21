@@ -282,6 +282,29 @@ def test_08_scales_with_no_more_t_admm():
     )
 
 
+@_register("Test  8b: no stale 'admm_per_iter' references in registry.py")
+def test_08b_no_stale_admm_per_iter():
+    """The Stage 17 rewrite renamed the local variable
+    ``admm_per_iter`` (and its derived ``admm_total``) to
+    ``admm_per_round`` everywhere in the fronthaul-table block.  A
+    user-reported leftover in the metadata dict (line 725) referenced
+    the deleted name and raised "Unresolved reference" at runtime.
+
+    Belt-and-braces against any future regression of the same kind:
+    the file should not reference ``admm_per_iter`` anywhere, since
+    that variable no longer exists."""
+    src = (REPO_ROOT / "cordis" / "experiments" / "registry.py").read_text()
+    # Look for the variable name as a whole word (not as part of a
+    # longer identifier like "admm_per_iter_real_scalars" — though
+    # such an identifier should also have been renamed).
+    bad = re.findall(r'\badmm_per_iter\b', src)
+    assert not bad, (
+        f"found {len(bad)} reference(s) to the now-deleted "
+        f"`admm_per_iter` variable in registry.py.  Rename to "
+        f"`admm_per_round` to match the Stage 17 vocabulary."
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Tier 4 — dispatcher logs when filtering
 # ─────────────────────────────────────────────────────────────────────────────
