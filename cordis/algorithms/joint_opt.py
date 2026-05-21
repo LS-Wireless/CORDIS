@@ -639,6 +639,7 @@ def solve_cordis_admm(
     slack_tol:  float = 1e-3,
     n_snapshots: int  = 1,
     verbose:    bool  = False,
+    progress:   bool  = False,
 ) -> ADMMResult:
     """
     Run CORDIS-ADMM (journal paper Section 5).
@@ -833,7 +834,22 @@ def solve_cordis_admm(
     # =====================================================================
     # ADMM main loop
     # =====================================================================
-    for n_iter in range(n_admm_max):
+    # Optional per-iteration progress bar.  Used by convergence_trace
+    # which runs ONE solve with up to ``n_admm_max`` outer iterations;
+    # for Monte Carlo runners we'd just be re-drawing the bar thousands
+    # of times, so the kwarg defaults to False.
+    _iter_range = range(n_admm_max)
+    if progress:
+        try:
+            from tqdm import tqdm
+            _iter_range = tqdm(
+                _iter_range, desc="ADMM iter", leave=True,
+                total=n_admm_max, unit="iter",
+            )
+        except ImportError:
+            pass  # silently no-op if tqdm isn't installed
+
+    for n_iter in _iter_range:
         # ── Build SCA sensing gradient at current W (per AP) ─────────────
         G_sca = _compute_sca_gradient(
             W_cur, sensing_stats, association, topo, omega, n_snapshots,

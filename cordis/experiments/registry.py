@@ -260,7 +260,7 @@ def run_gamma_sweep(
     gamma_values: Optional[List[float]] = None,
     n_drops: int = 20,
     n_realizations: int = 2,
-    spec_set: str = "cordis_vs_centralized",
+    spec_set: str = "all_algorithms",
 ) -> ExperimentResult:
     """Sweep per-UE SINR target γ ∈ {-3, 0, 3, 6, 10, 14, 18} dB."""
     factory = _resolve_spec_set(spec_set)
@@ -299,7 +299,7 @@ def run_kappa_sweep(
     kappa_values: Optional[List[float]] = None,
     n_drops: int = 20,
     n_realizations: int = 2,
-    spec_set: str = "cordis_vs_centralized",
+    spec_set: str = "all_algorithms",
 ) -> ExperimentResult:
     """Sweep prox-regularisation weight κ ∈ [0, 2].
 
@@ -387,7 +387,7 @@ def run_clutter_cnr_sweep(
     n_drops: int = 20,
     n_realizations: int = 2,
     field_path: str = "sensing.clutter_cnr_db",
-    spec_set: str = "cordis_vs_centralized",
+    spec_set: str = "all_algorithms",
 ) -> ExperimentResult:
     """Sweep clutter-to-noise ratio (CNR) in dB.
 
@@ -504,7 +504,7 @@ def run_antennas_sweep(
     n_drops: int = 20,
     n_realizations: int = 2,
     field_path: str = "topology.n_ant",
-    spec_set: str = "cordis_vs_benchmarks",
+    spec_set: str = "all_algorithms",
 ) -> ExperimentResult:
     """Sweep antennas per AP (M)."""
     factory = _resolve_spec_set(spec_set)
@@ -576,6 +576,13 @@ def run_convergence_trace(
     admm_kwargs = {k: spec_obj.params[k]
                    for k in fwd_keys if k in spec_obj.params}
 
+    logger.info("convergence_trace: building scenario "
+                "(drop_seed=%d, real_seed=%d)…",
+                drop_seed, realization_seed)
+    logger.info("convergence_trace: running CORDIS-ADMM "
+                "(n_admm_max=%d) — per-iteration progress bar follows.",
+                admm_kwargs.get("n_admm_max", 30))
+
     _W, admm_result = run_cordis_admm(
         topo=scenario.topo,
         cfg=scenario.cfg,
@@ -584,6 +591,7 @@ def run_convergence_trace(
         association=scenario.association,
         sigma_n_sq=scenario.sigma_n_sq,
         Pmax=scenario.Pmax,
+        progress=True,           # ← Stage 17: per-iteration tqdm bar
         **admm_kwargs,
     )
 
@@ -619,25 +627,35 @@ def run_fronthaul_table(
     """
     Compute per-AP fronthaul coordination overhead for each algorithm.
 
-    All sizes are journal-paper accurate:
+    All sizes are journal-paper accurate.  ``real_scalars`` is reported
+    **per coordination round** for every algorithm so the bar chart is
+    apples-to-apples; the number of rounds each algorithm needs is
+    reported separately as ``iterations``.
 
     * **Centralized**: APs ship raw CSI and beamformers — H_a (M×N_ue
-      complex) and W_a (M×|D| complex) per coordination round.
+      complex) and W_a (M×|D| complex) per coordination round.  Runs
+      once per coherence block → ``iterations = 1``.
     * **CORDIS-Split** (Algorithm 1): each AP sends per-user scalars
       ``{β̂_au, g̃_au, e_au^(s)}`` plus the sensing scalars ``z_a, q̃_a``,
-      then receives back ρ*_a.  Total per AP per round:
-      ``3·N_ue + 3`` real scalars.
+      then receives back ρ*_a.  ``3·N_ue + 3`` real scalars per round.
+      One round per coherence block → ``iterations = 1``.
     * **CORDIS-ADMM** (Algorithm 2, Section V-C): each AP ships
       ``l_au ∈ ℂ^(|D|+1)`` to the CPU for every user u, and receives
-      the broadcast residual ``Σ̃_u`` of the same structure.  The
-      ``l_au`` vector is mostly complex (CDS scalar, MUI vector,
-      S2CI vector) with one real entry (``e_au``), giving
-      ``2(N_ue+N_t) + 1`` real scalars per ``l_au``.  Per AP per
-      outer ADMM iteration, both directions combined:
-      ``2 · N_ue · (2|D| + 1)`` real scalars.
+      the broadcast residual ``Σ̃_u`` of the same structure.  Per AP
+      per outer ADMM iteration, both directions combined:
+      ``2 · N_ue · (2|D| + 1)`` real scalars.  Runs T_ADMM iterations
+      per coherence block (empirically estimated via ``n_admm_drops``
+      ADMM solves), so total per coherence block is
+      ``real_scalars × iterations``.
 
-    T_ADMM is estimated empirically by running ADMM for
-    ``n_admm_drops`` drops and averaging the ``iters`` diagnostic.
+    Notes
+    -----
+    Earlier versions of this experiment pre-multiplied
+    ``real_scalars`` by T_ADMM for ADMM, conflating per-round and
+    total-per-solve metrics across rows and making ADMM look
+    artificially worse on the bar chart.  Stage 17 fixes this: every
+    row's ``real_scalars`` is the per-round count, and ``iterations``
+    holds the per-solve multiplier.
     """
     # 1. Estimate average ADMM iterations.
     specs = [admm_spec(n_ue=_get_n_ue(cfg))]
@@ -660,40 +678,40 @@ def run_fronthaul_table(
 
     iters_nan = admm_avg_iters != admm_avg_iters              # NaN check
 
-    # 3. Per-iteration real-scalar counts.
+    # 3. Per-coordination-round real-scalar counts (apples-to-apples).
     #    Centralized:    H_a (M×N_ue complex) + W_a (M×|D| complex)
-    centralized_count = 2 * (M * n_ue + M * n_streams)
+    centralized_per_round = 2 * (M * n_ue + M * n_streams)
     #    Split:          β̂_au, g̃_au, e_au^(s) per user  +  z_a, q̃_a  +  ρ*_a
-    split_count       = 3 * n_ue + 3
+    split_per_round       = 3 * n_ue + 3
     #    ADMM:           upload l_au + download Σ̃_u, both ℂ^(|D|+1) with
     #                    one real entry (e_au) → 2(N_ue+N_t)+1 real per vector
-    #                    × N_ue vectors × 2 directions × T_ADMM iterations
-    admm_real_per_iter_per_user = 2 * n_streams + 1
-    admm_per_iter               = 2 * n_ue * admm_real_per_iter_per_user
-    admm_total = (None if iters_nan
-                  else admm_per_iter * admm_avg_iters)
+    #                    × N_ue vectors × 2 directions PER ROUND
+    admm_per_round        = 2 * n_ue * (2 * n_streams + 1)
 
     # 4. Build table rows (journal-paper notation throughout).
     table = {
         "Centralized": {
             "data_to_share": r"$\widehat{\mathbf{H}}_{a_t},\ \mathbf{W}_{a_t}$",
             "size":          r"$\mathbb{C}^{M_t \times N_{\rm UE}} + \mathbb{C}^{M_t \times |\mathcal{D}|}$",
-            "real_scalars":  centralized_count,
+            "real_scalars":  centralized_per_round,
+            "iterations":    1,
             "scales_with":   r"$M_t \cdot (N_{\rm UE} + |\mathcal{D}|)$",
             "scalable":      False,
         },
         "CORDIS-Split": {
             "data_to_share": r"$\{\widehat{\beta}_{a_t u}, \widetilde{g}_{a_t u}, e_{a_t u}^{(s)}\}_{u \in \mathcal{U}},\ z_{a_t}, \widetilde{q}_{a_t},\ \rho^\ast_{a_t}$",
             "size":          r"$(3 N_{\rm UE} + 3) \times \mathbb{R}$",
-            "real_scalars":  split_count,
+            "real_scalars":  split_per_round,
+            "iterations":    1,
             "scales_with":   r"$N_{\rm UE}$",
             "scalable":      True,
         },
         "CORDIS-ADMM": {
             "data_to_share": r"$\mathbf{l}_{a_t u}\ (\mathrm{up}),\ \widetilde{\boldsymbol{\Sigma}}_u\ (\mathrm{dn})$",
             "size":          r"$2 \cdot N_{\rm UE} \cdot \mathbb{C}^{|\mathcal{D}|+1}$ per outer iter",
-            "real_scalars":  admm_total,
-            "scales_with":   r"$T_{\rm ADMM} \cdot N_{\rm UE} \cdot (2|\mathcal{D}| + 1)$",
+            "real_scalars":  admm_per_round,
+            "iterations":    (None if iters_nan else admm_avg_iters),
+            "scales_with":   r"$N_{\rm UE} \cdot (2|\mathcal{D}| + 1)$",
             "scalable":      True,
         },
     }

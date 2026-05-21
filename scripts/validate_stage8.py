@@ -26,6 +26,11 @@ matching ``validate_stage<tag>.py``:
 * **16** — experiment-dispatch bug fixes: ``_set_field`` preserves int
   destination types, ``sweep_config_field`` re-validates per point,
   ``_exp_common.py`` filters ``n_drops``/``n_realizations`` by signature
+* **17** — experiment polish: uniform ``spec_set="all_algorithms"``
+  defaults across CDF/sweep experiments; per-iteration progress bar
+  in ``solve_cordis_admm`` (used by ``convergence_trace``); fronthaul
+  table now stores per-round real-scalar counts + iterations field
+  (apples-to-apples bar chart across algorithms)
 
 Each sub-validator is a self-contained script under ``scripts/``.  This
 runner invokes them via ``subprocess`` so each runs in its own process
@@ -66,6 +71,7 @@ SUBVALIDATORS: List[Tuple[str, str]] = [
     ("14", "validate_stage14.py"),
     ("15", "validate_stage15.py"),
     ("16", "validate_stage16.py"),
+    ("17", "validate_stage17.py"),
 ]
 
 

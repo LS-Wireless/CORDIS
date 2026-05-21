@@ -79,13 +79,13 @@ def _have_cordis() -> bool:
 EXPECTED_DEFAULTS = {
     "run_sinr_cdf":          "all_algorithms",
     "run_scnr_cdf":          "all_algorithms",
-    "run_gamma_sweep":       "cordis_vs_centralized",
-    "run_kappa_sweep":       "cordis_vs_centralized",
-    "run_clutter_cnr_sweep": "cordis_vs_centralized",
+    "run_gamma_sweep":       "all_algorithms",
+    "run_kappa_sweep":       "all_algorithms",
+    "run_clutter_cnr_sweep": "all_algorithms",
     "run_snr_sweep":         "all_algorithms",
     "run_n_ue_sweep":        "all_algorithms",
     "run_n_ap_sweep":        "all_algorithms",
-    "run_antennas_sweep":    "cordis_vs_benchmarks",
+    "run_antennas_sweep":    "all_algorithms",
 }
 
 # Functions that intentionally don't accept spec_set (fixed by design).

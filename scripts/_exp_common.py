@@ -438,8 +438,14 @@ def run_experiment(experiment_name: str,
     sig = _inspect.signature(fn)
     if "n_drops" in sig.parameters:
         experiment_kwargs["n_drops"] = n_drops
+    else:
+        log.info("--n-drops not applicable to %r (fixed-trial experiment); "
+                 "ignored.", experiment_name)
     if "n_realizations" in sig.parameters:
         experiment_kwargs["n_realizations"] = n_real
+    else:
+        log.info("--n-realizations not applicable to %r (fixed-trial "
+                 "experiment); ignored.", experiment_name)
 
     # Forward --specs IFF the experiment's run_* function accepts it.
     # convergence_trace and fronthaul_table don't take a spec_set kwarg
