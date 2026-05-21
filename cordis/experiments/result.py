@@ -37,7 +37,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Callable
 
 import numpy as np
 
@@ -72,12 +72,27 @@ class LoadedADMMResult:
     """Minimal duck-typed stand-in for ADMMResult loaded from disk.
 
     Mirrors the attributes that :func:`cordis.plotting.plot_admm_convergence`
-    reads, so a freshly loaded trace renders identically to a fresh one.
+    and the trace-notebook diagnostic cells read.
+
+    Fields beyond the four convergence-plot basics
+    (``primal_res_history``, ``dual_res_history``, ``slack_history``,
+    ``best_iter``) are written by Stage-18-diag-v2 onwards.  Loading
+    a pre-v2 trace leaves them as their dataclass defaults — None for
+    optional arrays, False/0 for scalars — and the diagnostic cells
+    treat that gracefully.
     """
-    primal_res_history: np.ndarray
-    dual_res_history:   np.ndarray
-    slack_history:      Optional[np.ndarray] = None
-    best_iter:          Optional[int]        = None
+    primal_res_history:  np.ndarray
+    dual_res_history:    np.ndarray
+    slack_history:       Optional[np.ndarray] = None
+    best_iter:           Optional[int]        = None
+    # ── extended diagnostic fields (Stage-18-diag-v2) ──
+    sinr_history:        Optional[np.ndarray] = None
+    sensing_obj_history: Optional[np.ndarray] = None
+    z_norm_history:      Optional[np.ndarray] = None
+    converged:           bool                 = False
+    feasible:            bool                 = True
+    n_admm_iters:        int                  = 0
+    inner_failures:      int                  = 0
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -196,6 +211,24 @@ class ExperimentResult:
             best_iter = getattr(self.admm_result, "best_iter", None)
             if best_iter is not None:
                 arrs["best_iter"] = np.asarray(int(best_iter))
+            # ── Extended diagnostic fields (Stage-18-diag-v2) ──
+            # Per-iter per-user SINR vectors, sensing-objective scalar,
+            # consensus-vector norm — used by the per-user diagnostic
+            # cells in playground_trace.ipynb to identify "stuck users"
+            # when the warm-start is poor.
+            for attr in ("sinr_history",
+                         "sensing_obj_history",
+                         "z_norm_history"):
+                v = getattr(self.admm_result, attr, None)
+                if v is not None and len(v) > 0:
+                    arrs[attr] = np.asarray(v, dtype=float)
+            # Scalar status — small, always persisted when present.
+            for attr, cast in (("converged",      lambda x: int(bool(x))),
+                               ("feasible",       lambda x: int(bool(x))),
+                               ("n_admm_iters",   int),
+                               ("inner_failures", int)):
+                if hasattr(self.admm_result, attr):
+                    arrs[attr] = np.asarray(cast(getattr(self.admm_result, attr)))
             np.savez_compressed(exp_dir / "trace.npz", **arrs)
 
         elif self.kind == "table":
@@ -215,7 +248,7 @@ class ExperimentResult:
     def load(
         cls,
         exp_dir: Union[str, Path],
-        sim_result_loader: Optional[callable] = None,
+        sim_result_loader: Optional[Callable] = None,
     ) -> "ExperimentResult":
         """
         Load artefacts from ``exp_dir``.
@@ -271,13 +304,32 @@ class ExperimentResult:
 
         if kind == "trace":
             data = np.load(exp_dir / "trace.npz")
+            files = set(data.files)
             admm = LoadedADMMResult(
                 primal_res_history=data["primal_res_history"],
                 dual_res_history=data["dual_res_history"],
                 slack_history=(data["slack_history"]
-                               if "slack_history" in data.files else None),
+                               if "slack_history" in files else None),
                 best_iter=(int(data["best_iter"])
-                           if "best_iter" in data.files else None),
+                           if "best_iter" in files else None),
+                # ── Extended fields (Stage-18-diag-v2).  Legacy traces
+                # saved before this addition simply don't contain them
+                # and we fall back to dataclass defaults.
+                sinr_history=(data["sinr_history"]
+                              if "sinr_history" in files else None),
+                sensing_obj_history=(data["sensing_obj_history"]
+                                     if "sensing_obj_history" in files
+                                     else None),
+                z_norm_history=(data["z_norm_history"]
+                                if "z_norm_history" in files else None),
+                converged=(bool(int(data["converged"]))
+                           if "converged" in files else False),
+                feasible=(bool(int(data["feasible"]))
+                          if "feasible" in files else True),
+                n_admm_iters=(int(data["n_admm_iters"])
+                              if "n_admm_iters" in files else 0),
+                inner_failures=(int(data["inner_failures"])
+                                if "inner_failures" in files else 0),
             )
             return cls(name=name, kind="trace",
                        admm_result=admm, metadata=metadata)

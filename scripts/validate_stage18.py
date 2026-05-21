@@ -320,6 +320,121 @@ def test_09_trace_notebook_safe():
     )
 
 
+@_register("Test 10: trace save/load round-trip preserves per-user "
+           "diagnostic fields (sinr_history, n_admm_iters, etc.)")
+def test_10_trace_roundtrip_preserves_diag_fields():
+    """User-reported gap: ``LoadedADMMResult`` previously dropped
+    ``sinr_history``, ``n_admm_iters``, ``converged``, ``feasible``,
+    ``inner_failures``, ``sensing_obj_history``, ``z_norm_history``
+    on save/load.  The per-user diagnostic in playground_trace.ipynb
+    couldn't access them.  Stage-18-diag-v2 extends the save path to
+    persist all of them and the load path + dataclass to read them
+    back.
+
+    Test by round-tripping a synthetic ADMMResult and confirming every
+    extended field is preserved.  Lock-in for the contract."""
+    try:
+        from cordis.experiments.result import ExperimentResult
+        import numpy as np
+        import tempfile
+        from pathlib import Path
+    except ModuleNotFoundError as e:
+        raise _SkipTest(f"cordis.experiments.result not importable: {e}")
+
+    expected_fields = {
+        "sinr_history":        (4, 3),
+        "sensing_obj_history": (4,),
+        "z_norm_history":      (4,),
+    }
+    expected_scalars = {
+        "converged":      False,
+        "feasible":       True,
+        "n_admm_iters":   4,
+        "inner_failures": 1,
+        "best_iter":      3,
+    }
+
+    class _FakeADMM:
+        def __init__(self):
+            self.primal_res_history  = np.array([1.0, 0.5, 0.25, 0.12])
+            self.dual_res_history    = np.array([2.0, 1.0, 0.5, 0.25])
+            self.slack_history       = np.ones((4, 3)) * 0.1
+            self.sinr_history        = np.ones((4, 3)) * 15.0
+            self.sensing_obj_history = np.array([0.5, 0.6, 0.7, 0.8])
+            self.z_norm_history      = np.array([10.0, 9.0, 8.5, 8.2])
+            for k, v in expected_scalars.items():
+                setattr(self, k, v)
+
+    try:
+        result = ExperimentResult(name="diag_test", kind="trace",
+                                   admm_result=_FakeADMM(), metadata={})
+        with tempfile.TemporaryDirectory() as tmp:
+            exp_dir = Path(tmp) / "out"
+            exp_dir.mkdir()
+            result.save(exp_dir)
+            loaded = ExperimentResult.load(exp_dir)
+    except ModuleNotFoundError as e:
+        raise _SkipTest(f"transitive cordis dep missing: {e}")
+
+    a = loaded.admm_result
+    for fname, exp_shape in expected_fields.items():
+        v = getattr(a, fname, None)
+        assert v is not None, (
+            f"{fname} was dropped by save/load — Stage-18-diag-v2 "
+            f"extension regression"
+        )
+        assert v.shape == exp_shape, (
+            f"{fname} shape mismatch: expected {exp_shape}, got {v.shape}"
+        )
+    for fname, exp_val in expected_scalars.items():
+        v = getattr(a, fname, None)
+        assert v == exp_val, (
+            f"{fname} round-trip mismatch: expected {exp_val!r}, got {v!r}"
+        )
+
+
+@_register("Test 11: legacy trace (without extended fields) loads with "
+           "graceful defaults, not AttributeError")
+def test_11_legacy_trace_loads():
+    """A trace.npz saved before Stage-18-diag-v2 has only the 4 original
+    fields.  Loading it should not raise — extended fields should fall
+    back to dataclass defaults (None for arrays, False/0/True for scalars)."""
+    try:
+        from cordis.experiments.result import ExperimentResult
+        import numpy as np, json, tempfile
+        from pathlib import Path
+    except ModuleNotFoundError as e:
+        raise _SkipTest(f"cordis.experiments.result not importable: {e}")
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            exp_dir = Path(tmp) / "legacy"
+            exp_dir.mkdir()
+            (exp_dir / "manifest.json").write_text(json.dumps({
+                "name": "convergence_trace", "kind": "trace", "metadata": {},
+            }))
+            np.savez_compressed(exp_dir / "trace.npz",
+                primal_res_history=np.array([1.0, 0.5]),
+                dual_res_history=np.array([2.0, 1.0]),
+            )
+            loaded = ExperimentResult.load(exp_dir)
+    except ModuleNotFoundError as e:
+        raise _SkipTest(f"transitive cordis dep missing: {e}")
+
+    a = loaded.admm_result
+    for fname in ("sinr_history", "sensing_obj_history",
+                  "z_norm_history", "slack_history"):
+        assert getattr(a, fname) is None, (
+            f"{fname} should be None for legacy trace, got "
+            f"{getattr(a, fname)!r}"
+        )
+    assert a.best_iter is None
+    assert a.converged is False
+    assert a.feasible is True
+    assert a.n_admm_iters == 0
+    assert a.inner_failures == 0
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Runner
 # ─────────────────────────────────────────────────────────────────────────────
