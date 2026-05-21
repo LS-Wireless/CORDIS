@@ -119,6 +119,42 @@ def load_run(path: Union[str, Path]):
     return ExperimentResult.load(p)
 
 
+def load_result(experiment_name: str,
+                exp_dir: Optional[Union[str, Path]] = None,
+                results_root: Union[str, Path] = "results"):
+    """Load an :class:`ExperimentResult` — latest run by default, or a
+    specific run directory if ``exp_dir`` is given.
+
+    Convenience dispatcher for notebook cells:
+
+    .. code-block:: python
+
+        # Load most recent run (default).
+        result = load_result('sinr_cdf')
+
+        # Load a specific timestamped run for paper-grade plots or
+        # re-rendering an older comparison.
+        result = load_result('sinr_cdf',
+                             exp_dir='results/exp_sinr_cdf/20260520_113500')
+
+    Parameters
+    ----------
+    experiment_name : str
+        Bare experiment name (without ``exp_`` prefix), e.g. ``'sinr_cdf'``.
+        Ignored when ``exp_dir`` is given.
+    exp_dir : str or Path, optional
+        Path to a specific run directory.  If provided, loads that
+        directory directly; otherwise loads the most recent run of
+        ``experiment_name`` under ``results_root``.
+    results_root : str or Path
+        Root directory containing per-experiment subfolders.
+        Defaults to ``"results"``.
+    """
+    if exp_dir is None:
+        return load_latest_result(experiment_name, results_root=results_root)
+    return load_run(exp_dir)
+
+
 def summarize(result) -> None:
     """Print a one-paragraph summary of an :class:`ExperimentResult`.
 

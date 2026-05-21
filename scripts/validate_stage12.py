@@ -165,7 +165,14 @@ def test_07_first_cell_markdown():
 @_register("Test  8: every notebook has an EXPERIMENT = ... cell")
 def test_08_experiment_cell():
     """The 'one knob' contract: every notebook lets the user pick the
-    experiment by editing a single ``EXPERIMENT = '...'`` line."""
+    experiment by editing a single ``EXPERIMENT = '...'`` line.
+
+    Accepts any whitespace around the ``=`` (e.g. aligned columns when
+    derived variables follow: ``EXPERIMENT     = f'{exp_name}_cdf'``).
+    The contract is "there exists an EXPERIMENT binding"; formatting
+    is not part of it.
+    """
+    import re
     for name in NOTEBOOKS:
         nb = json.loads((NB_DIR / name).read_text())
         found = False
@@ -175,7 +182,7 @@ def test_08_experiment_cell():
             src = cell["source"]
             if isinstance(src, list):
                 src = "".join(src)
-            if "EXPERIMENT = " in src or "EXPERIMENT=" in src:
+            if re.search(r"^EXPERIMENT\s*=", src, re.M):
                 found = True
                 break
         assert found, (

@@ -31,6 +31,11 @@ matching ``validate_stage<tag>.py``:
   in ``solve_cordis_admm`` (used by ``convergence_trace``); fronthaul
   table now stores per-round real-scalar counts + iterations field
   (apples-to-apples bar chart across algorithms)
+* **18** — notebook polish: ``load_result(name, exp_dir=None)`` helper
+  for explicit-folder loading; CDF + sweep playgrounds parameterized
+  via ``exp_name`` so switching between metric families / sweep params
+  is one edit; ``best_iter`` field added to ADMMResult + safe getattr-
+  guarded usage in trace notebook
 
 Each sub-validator is a self-contained script under ``scripts/``.  This
 runner invokes them via ``subprocess`` so each runs in its own process
@@ -72,6 +77,7 @@ SUBVALIDATORS: List[Tuple[str, str]] = [
     ("15", "validate_stage15.py"),
     ("16", "validate_stage16.py"),
     ("17", "validate_stage17.py"),
+    ("18", "validate_stage18.py"),
 ]
 
 

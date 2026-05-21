@@ -168,6 +168,11 @@ class ADMMResult:
     Output of CORDIS-ADMM (Stage 6c).
 
     Histories are appended once per outer iteration.
+
+    ``best_iter`` (1-indexed) is the outer-iteration index whose
+    consensus residual was lowest — useful for diagnostics when the
+    solver doesn't fully converge and returns the best iterate seen.
+    Set to 0 if no iteration has been recorded.
     """
     W_tx:                 Dict[int, NDArray[np.complex128]]
     primal_res_history:   List[float] = field(default_factory=list)
@@ -181,6 +186,7 @@ class ADMMResult:
     solver:               str         = ""
     feasible:             bool        = True
     inner_failures:       int         = 0
+    best_iter:            int         = 0
 
 
 # =============================================================================
@@ -1113,6 +1119,7 @@ def solve_cordis_admm(
                 solver=solver_nm,
                 feasible=any_inner_ok,
                 inner_failures=inner_failures,
+            best_iter=best_iter,
             )
 
         if consec_fail >= MAX_CONSEC_FAIL:
@@ -1142,6 +1149,7 @@ def solve_cordis_admm(
             solver=solver_nm,
             feasible=any_inner_ok,
             inner_failures=inner_failures,
+            best_iter=best_iter,
         )
 
     return ADMMResult(
@@ -1157,6 +1165,7 @@ def solve_cordis_admm(
         solver=solver_nm,
         feasible=any_inner_ok,
         inner_failures=inner_failures,
+        best_iter=best_iter,
     )
 
 
