@@ -162,6 +162,38 @@ def test_02_notebooks_use_load_result():
     )
 
 
+@_register("Test  2b: every playground notebook imports load_result "
+           "(not just calls it)")
+def test_02b_load_result_imported():
+    """Calling ``load_result(...)`` is not enough — it also has to be in
+    the explicit ``from _playground_helpers import (...)`` list at the
+    top of each notebook.  Without the import, every cell that uses it
+    raises NameError at runtime.
+
+    Stage 18 originally shipped with the call site updated but the
+    import statement (in ``INTRO_SETUP``) untouched; that's exactly
+    the regression this test now locks out."""
+    offenders = []
+    for nb in _NOTEBOOKS:
+        src = _notebook_code(nb)
+        # Look for an import line that names load_result.  We accept any
+        # whitespace, parenthesised multi-line imports, and trailing
+        # commas — what matters is that `load_result` appears as a name
+        # in a `from _playground_helpers import ...` block.
+        has_import = bool(re.search(
+            r"from\s+_playground_helpers\s+import\s+[^)]*\bload_result\b",
+            src, re.S,
+        ))
+        if not has_import:
+            offenders.append(nb)
+    assert not offenders, (
+        "load_result is called but not imported in:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nAdd `load_result` to the `from _playground_helpers "
+          "import (...)` list in INTRO_SETUP."
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Tier 2 — exp_name parameterization
 # ─────────────────────────────────────────────────────────────────────────────

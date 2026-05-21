@@ -77,7 +77,7 @@ INTRO_SETUP = code(
     "import sys, logging",
     "from pathlib import Path",
     "from _playground_helpers import (",
-    "    setup_paper_style, load_latest_result, load_run, summarize,",
+    "    setup_paper_style, load_latest_result, load_run, load_result, summarize,",
     ")",
     "",
     "import numpy as np",
