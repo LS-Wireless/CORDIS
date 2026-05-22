@@ -362,12 +362,16 @@ def run_kappa_sweep(
     Per joint_opt.py, κ is auto-scaled internally so user-facing κ=1
     means "strong clutter avoidance".  Useful range is [0, 2].
 
-    Two places must be updated per sweep point:
-      * ``cfg.algorithm.admm.kappa`` — read by ``solve_centralized``
+    Three places must be updated per sweep point:
+      * ``cfg.algorithm.admm.kappa``  — read by ``solve_centralized``
         directly (the dispatcher does NOT forward κ for kind="centralized").
-      * ``spec.params["kappa"]`` — forwarded by the dispatcher to
-        ``solve_cordis_admm`` (the Stage-7 gap is that this isn't
-        derived from cfg).
+      * ``cfg.algorithm.split.kappa`` — read by ``solve_cordis_split``
+        directly (Split reads cfg, doesn't go through spec.params).
+        Without this, Split keeps κ at its dataclass default 1.0 for
+        every sweep point, producing a flat line in the figure.
+      * ``spec.params["kappa"]``      — forwarded by the dispatcher to
+        ``solve_cordis_admm`` (the Stage-7 gap, fixed by Stage 19's
+        per-call ``factory(..., kappa=k)`` here).
     """
     factory = _resolve_spec_set(spec_set)
     if kappa_values is None:
@@ -384,9 +388,12 @@ def run_kappa_sweep(
 
     results: Dict[float, Any] = {}
     for k in axis.values:
-        cfg_v = _override_cfg(cfg, **{"algorithm.admm.kappa": float(k)})
+        cfg_v = _override_cfg(cfg, **{
+            "algorithm.admm.kappa":  float(k),
+            "algorithm.split.kappa": float(k),    # ← also override Split's κ
+        })
         _kw = {"n_ue": n_ue, "kappa": float(k)}
-        for _k, _v in _admm_kwargs_from_cfg(cfg).items():
+        for _k, _v in _admm_kwargs_from_cfg(cfg_v).items():
             _kw.setdefault(_k, _v)
         specs = factory(**_kw)
         sr = _run_single(cfg_v, rc, specs)

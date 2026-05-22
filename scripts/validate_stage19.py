@@ -221,7 +221,10 @@ def test_05_every_run_fn_forwards():
         if not body:
             missing.append(f"{fn_name} (not found in registry.py)")
             continue
-        if "_admm_kwargs_from_cfg(cfg)" not in body:
+        # Accept any cfg-like variable name (cfg, cfg_v for kappa_sweep's
+        # overridden cfg, etc.) — what matters is that the helper is
+        # invoked with something cfg-shaped.
+        if not re.search(r"_admm_kwargs_from_cfg\(\s*cfg\w*\s*\)", body):
             missing.append(f"{fn_name} (no cfg-forwarding)")
     assert not missing, (
         "run_* functions missing the cfg-forwarding pattern:\n  "
@@ -338,6 +341,35 @@ def test_08_dispatcher_fwd_keys():
         f"solve_cordis_admm without the dispatcher forwarding them.  "
         f"Current fwd_keys text:\n{fwd_keys_text}"
     )
+
+
+@_register("Test  9: run_kappa_sweep updates BOTH cfg.algorithm.admm.kappa "
+           "AND cfg.algorithm.split.kappa per sweep point")
+def test_09_kappa_sweep_updates_split_too():
+    """User-reported: a κ-sweep figure showed Split as a flat horizontal
+    line because only admm.kappa was being overridden per sweep point —
+    Split (which reads cfg.algorithm.split.kappa directly inside
+    solve_cordis_split) kept its dataclass default 1.0 throughout.
+
+    Source-grep the body of run_kappa_sweep for both override paths."""
+    src = (REPO_ROOT / "cordis" / "experiments" / "registry.py").read_text()
+    m = re.search(
+        r"def\s+run_kappa_sweep\s*\(.*?(?=^def\s+\w)",
+        src, re.M | re.S,
+    )
+    assert m, "could not locate run_kappa_sweep"
+    body = m.group(0)
+    assert '"algorithm.admm.kappa"' in body, (
+        "run_kappa_sweep must override cfg.algorithm.admm.kappa "
+        "(read directly by solve_centralized)"
+    )
+    assert '"algorithm.split.kappa"' in body, (
+        "run_kappa_sweep must override cfg.algorithm.split.kappa "
+        "(read directly by solve_cordis_split — without this, Split "
+        "appears as a flat line in κ-sweep figures because it keeps "
+        "the dataclass default 1.0)"
+    )
+
 
 def main() -> int:
     print("=" * 78)
