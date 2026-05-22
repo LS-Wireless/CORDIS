@@ -47,7 +47,7 @@ Generated automatically from `cordis/utils/config.py`.
 | `model` | str | `3gpp_umi_rician` | - | {3gpp_umi_rician} | Channel model identifier string (reserved for future model selection) |
 | `scenario` | str | `UMi` | - | {UMi|UMa|RMa} | 3GPP propagation scenario; controls path loss and LoS probability formulas |
 | `environment` | str | `StreetCanyon` | - | - |  |
-| `snr_db` | float | `20.0` | dB | any real (typical: 0 to 30) | Transmit SNR = P_max / sigma_n^2; sets the power budget for all APs |
+| `snr_db` | float | `140.0` | dB | any real (cell-free typical: 120 to 145; default: 140) | Transmit SNR = P_max / sigma_n^2; sets per-AP power budget.  At B=20 MHz, NF=7 dB, T=290 K, the mapping is P_max[W] = 10^((SNR_dB - 124)/10).  Examples: 124 dB = 1 W, 134 dB = 10 W, 140 dB = 40 W, 144 dB = 100 W. Note: realistic urban-micro pathloss is ~120-130 dB at 500 m / 3 GHz, so SNR_dB << 120 leaves no link budget |
 | `noise_figure_db` | float | `7.0` | dB | >= 0 | Receiver noise figure NF added to thermal noise floor |
 | `noise_temp_k` | float | `290.0` | K | > 0 (standard: 290) | Thermal noise reference temperature T_0 |
 | `tau_f` | int | `200` | samples | > tau_p + tau_d | TDD frame size tau_f in channel uses; must satisfy tau_f >= tau_p + tau_d |
@@ -78,7 +78,7 @@ Generated automatically from `cordis/utils/config.py`.
 | `sigma_rcs_sq_db` | float | `-3.0` | dB | any real (typical: -10 to 10) | RCS power variance sigma_RCS^2 = E[|zeta_t|^2]; Swerling-I model |
 | `swerling_model` | int | `1` | - | {0|1} | Target RCS fluctuation model: 0 = deterministic, 1 = Swerling-I (CN) |
 | `rx_strategy` | str | `single_closest_centroid` | - | {single_closest_centroid|single_farthest_centroid|per_target_closest|assent_file|assent_live} | Receive AP selection strategy; determines which APs collect target echoes |
-| `los_model` | str | `3gpp_umi` | - | {3gpp_umi|always|deterministic} | LoS availability model for target s_t; controls stochastic blockage |
+| `los_model` | str | `always` | - | {always|3gpp_umi|deterministic} (default: always) | LoS availability model for target s_t in (eq. sensing-channel-target).  'always' forces s_t=1 for all bistatic links — required by the paper's rank-one LoS-only target channel model (Proposition 3) because s_t=0 zeros out the entire target echo and SCNR drops to the -300 dB sentinel.  '3gpp_umi' uses distance-dependent stochastic LoS probability (realistic but most urban targets become undetectable).  'deterministic' uses a fixed P_LoS via los_probability_override |
 | `los_probability_override` | Optional[float] | `null` | - | [0, 1] or null | Fixed P_LoS value for all targets when los_model='deterministic'; null = use model |
 | `multi_static` | bool | `true` | - | {true|false} | Enable multi-static sensing (multiple TX/RX AP pairs per target) |
 | `max_tx_aps_per_target` | int | `5` | - | [1, n_ap - 1] | Maximum number of transmit APs illuminating a single target K_tx |
@@ -99,8 +99,8 @@ Generated automatically from `cordis/utils/config.py`.
 | `kappa` | float | `1.0` | - | >= 0 (0 = ignore clutter in objective) | Clutter penalty weight kappa in the linear sensing surrogate U_cpu^sens |
 | `rho` | float | `1.0` | - | > 0 (typical: 0.1 to 10) | ADMM penalty parameter rho controlling consensus convergence speed |
 | `n_max` | int | `50` | - | >= 1 | Maximum number of ADMM iterations N_max before forced termination |
-| `eps_pri` | float | `0.001` | - | > 0 (typical: 1e-3 to 1e-5) | Primal residual convergence threshold epsilon_pri |
-| `eps_dual` | float | `0.001` | - | > 0 (typical: 1e-3 to 1e-5) | Dual residual convergence threshold epsilon_dual |
+| `eps_pri` | float | `1.0` | - | > 0 (typical: 0.3 to 1.0; default: 1.0) | Primal residual convergence threshold ε_pri.  With the auto-balanced ρ (rho=1), residuals settle near 1 in SNR-amplitude units, so tolerances of 0.3-1.0 match the algorithm's natural equilibrium.  Values << 0.1 require rho > 1 (risks SCA destabilisation) and often cause ADMM to run to n_max without ever triggering the stop criterion |
+| `eps_dual` | float | `1.0` | - | > 0 (typical: 0.3 to 1.0; default: 1.0) | Dual residual convergence threshold ε_dual.  Same scaling considerations as eps_pri — keep at O(1) under default rho=1 auto-balance |
 | `xi_slack` | float | `10000.0` | - | >> 1 (typical: 1e3 to 1e5) | Slack variable penalty xi >> 0 in P-Central; ensures feasibility of SOC constraint |
 | `target_priority_equal` | bool | `true` | - | {true|false} | Use equal priority weights omega_t = 1 for all targets; if false supply weights at runtime |
 | `warm_start_from_split` | bool | `true` | - | {true|false} | Initialise ADMM beamformers W^(0) from CORDIS-Split Phase I output |

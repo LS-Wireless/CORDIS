@@ -123,7 +123,9 @@ class ChannelConfig:
     environment: str = "StreetCanyon"
 
     # ── Power budget ──────────────────────────────────────────────────────
-    snr_db: float = 20.0            # P_max / σ²_n [dB]
+    snr_db: float = 140.0           # P_max / σ²_n [dB] — ≈ 40 W per AP
+                                    # at B=20 MHz, NF=7 dB, T=290 K
+                                    # (σ²_n ≈ -94 dBm noise floor)
     noise_figure_db: float = 7.0    # Receiver noise figure [dB]
     noise_temp_k: float = 290.0     # Thermal noise temperature [K]
 
@@ -216,7 +218,14 @@ class SensingConfig:
     #   "assent_live"              – call ASSENT model at runtime
 
     # ── Stochastic LoS availability (binary s_t) ─────────────────────────
-    los_model: str = "3gpp_umi"     # "3gpp_umi" | "always" | "deterministic"
+    los_model: str = "always"       # "3gpp_umi" | "always" | "deterministic"
+    # Default is "always" because the paper's target channel model
+    # (eq. sensing-channel-target) is rank-one LoS-only: s_t ∈ {0,1}
+    # with no NLoS contribution.  Under stochastic UMi LoS at urban
+    # ranges, most (AP, target) links are NLoS → s_t = 0 → zero target
+    # echo → SCNR underflows to the -300 dB sentinel.  "always" forces
+    # s_t = 1 for all bistatic links and matches the assumption made
+    # in the paper's SCNR derivation (Proposition 3).
     los_probability_override: Optional[float] = None  # Fixed P_LoS if not None
 
     # ── Multi-static sensing ──────────────────────────────────────────────
@@ -286,8 +295,12 @@ class ADMMConfig:
 
     # ── Termination ───────────────────────────────────────────────────────
     n_max: int = 50                 # Maximum ADMM iterations N_max
-    eps_pri: float = 1e-3           # Primal residual tolerance ε_pri
-    eps_dual: float = 1e-3          # Dual residual tolerance ε_dual
+    eps_pri: float = 1.0            # Primal residual tolerance ε_pri
+    eps_dual: float = 1.0           # Dual residual tolerance ε_dual
+    # With the auto-balanced ρ (rho=1), the primal/dual residuals settle
+    # near 1 in SNR-amplitude units, so tolerances around 0.3–1.0 match
+    # the algorithm's natural equilibrium.  Setting these below ~0.1
+    # typically requires rho > 1, which can destabilise SCA.
 
     # ── P-Central slack (eq. admm-p-central) ─────────────────────────────
     xi_slack: float = 1e4           # Slack penalty ξ ≫ 0 for P-Central
@@ -828,9 +841,14 @@ PARAM_REGISTRY: Dict[str, Dict[str, str]] = {
         "range": "{UMi|UMa|RMa}",
     },
     "channel.snr_db": {
-        "help":  "Transmit SNR = P_max / sigma_n^2; sets the power budget for all APs",
+        "help":  ("Transmit SNR = P_max / sigma_n^2; sets per-AP power "
+                  "budget.  At B=20 MHz, NF=7 dB, T=290 K, the mapping is "
+                  "P_max[W] = 10^((SNR_dB - 124)/10).  Examples: "
+                  "124 dB = 1 W, 134 dB = 10 W, 140 dB = 40 W, 144 dB = 100 W. "
+                  "Note: realistic urban-micro pathloss is ~120-130 dB at "
+                  "500 m / 3 GHz, so SNR_dB << 120 leaves no link budget"),
         "unit":  "dB",
-        "range": "any real (typical: 0 to 30)",
+        "range": "any real (cell-free typical: 120 to 145; default: 140)",
     },
     "channel.noise_figure_db": {
         "help":  "Receiver noise figure NF added to thermal noise floor",
@@ -966,9 +984,16 @@ PARAM_REGISTRY: Dict[str, Dict[str, str]] = {
         "range": "{0|1}",
     },
     "sensing.los_model": {
-        "help":  "LoS availability model for target s_t; controls stochastic blockage",
+        "help":  ("LoS availability model for target s_t in (eq. sensing-"
+                  "channel-target).  'always' forces s_t=1 for all bistatic "
+                  "links — required by the paper's rank-one LoS-only target "
+                  "channel model (Proposition 3) because s_t=0 zeros out the "
+                  "entire target echo and SCNR drops to the -300 dB sentinel.  "
+                  "'3gpp_umi' uses distance-dependent stochastic LoS probability "
+                  "(realistic but most urban targets become undetectable).  "
+                  "'deterministic' uses a fixed P_LoS via los_probability_override"),
         "unit":  "-",
-        "range": "{3gpp_umi|always|deterministic}",
+        "range": "{always|3gpp_umi|deterministic} (default: always)",
     },
     "sensing.los_probability_override": {
         "help":  "Fixed P_LoS value for all targets when los_model='deterministic'; null = use model",
@@ -1074,14 +1099,21 @@ PARAM_REGISTRY: Dict[str, Dict[str, str]] = {
         "range": ">= 1",
     },
     "algorithm.admm.eps_pri": {
-        "help":  "Primal residual convergence threshold epsilon_pri",
+        "help":  ("Primal residual convergence threshold ε_pri.  With the "
+                  "auto-balanced ρ (rho=1), residuals settle near 1 in SNR-"
+                  "amplitude units, so tolerances of 0.3-1.0 match the "
+                  "algorithm's natural equilibrium.  Values << 0.1 require "
+                  "rho > 1 (risks SCA destabilisation) and often cause ADMM "
+                  "to run to n_max without ever triggering the stop criterion"),
         "unit":  "-",
-        "range": "> 0 (typical: 1e-3 to 1e-5)",
+        "range": "> 0 (typical: 0.3 to 1.0; default: 1.0)",
     },
     "algorithm.admm.eps_dual": {
-        "help":  "Dual residual convergence threshold epsilon_dual",
+        "help":  ("Dual residual convergence threshold ε_dual.  Same scaling "
+                  "considerations as eps_pri — keep at O(1) under default "
+                  "rho=1 auto-balance"),
         "unit":  "-",
-        "range": "> 0 (typical: 1e-3 to 1e-5)",
+        "range": "> 0 (typical: 0.3 to 1.0; default: 1.0)",
     },
     "algorithm.admm.xi_slack": {
         "help":  "Slack variable penalty xi >> 0 in P-Central; ensures feasibility of SOC constraint",

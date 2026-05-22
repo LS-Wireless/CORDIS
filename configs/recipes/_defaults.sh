@@ -61,7 +61,7 @@ CARRIER_FREQ_GHZ="${CARRIER_FREQ_GHZ:-3.5}"
 BANDWIDTH_MHZ="${BANDWIDTH_MHZ:-20.0}"
 
 # ─── Channel ─────────────────────────────────────────────────────────
-SNR_DB="${SNR_DB:-150.0}"
+SNR_DB="${SNR_DB:-140.0}"        # ≈ 40 W per AP at B=20 MHz, NF=7 dB
 PILOT_POWER_DB="${PILOT_POWER_DB:-120.0}"
 TAU_P="${TAU_P:-10}"
 ESTIMATION_METHOD="${ESTIMATION_METHOD:-MMSE}"
@@ -83,7 +83,7 @@ SIGMA_CLT="${SIGMA_CLT:-null}"
 CLUTTER_AS_DEG="${CLUTTER_AS_DEG:-15.0}"
 CLUTTER_CENTER_STRATEGY="${CLUTTER_CENTER_STRATEGY:-target_centroid}"
 CLUTTER_OFFSET_AZ_DEG="${CLUTTER_OFFSET_AZ_DEG:-60.0}"
-LOS_MODEL="${LOS_MODEL:-3gpp_umi}"
+LOS_MODEL="${LOS_MODEL:-always}"  # paper assumes s_t=1 (rank-1 LoS target model)
 LOS_PROBABILITY_OVERRIDE="${LOS_PROBABILITY_OVERRIDE:-null}"
 MAX_TX_APS_PER_TARGET="${MAX_TX_APS_PER_TARGET:-5}"
 MAX_RX_APS_PER_TARGET="${MAX_RX_APS_PER_TARGET:-3}"
@@ -101,8 +101,8 @@ SPLIT_XI_PENALTY="${SPLIT_XI_PENALTY:-10000.0}"
 ADMM_KAPPA="${ADMM_KAPPA:-1.0}"
 ADMM_RHO="${ADMM_RHO:-1.0}"
 ADMM_N_MAX="${ADMM_N_MAX:-50}"
-ADMM_EPS_PRI="${ADMM_EPS_PRI:-0.001}"
-ADMM_EPS_DUAL="${ADMM_EPS_DUAL:-0.001}"
+ADMM_EPS_PRI="${ADMM_EPS_PRI:-1.0}"   # auto-rho settles residuals near 1
+ADMM_EPS_DUAL="${ADMM_EPS_DUAL:-1.0}"  # auto-rho settles residuals near 1
 ADMM_XI_SLACK="${ADMM_XI_SLACK:-10000.0}"
 
 # ─── Simulation ──────────────────────────────────────────────────────

@@ -121,8 +121,8 @@ DEFAULT_KAPPA       = 1.0     # matches cfg.algorithm.admm.kappa
 DEFAULT_RHO_ADMM    = 1.0     # matches cfg.algorithm.admm.rho
 DEFAULT_N_ADMM_MAX  = 50      # matches cfg.algorithm.admm.n_max
 DEFAULT_XI_SLACK    = 1e4     # matches cfg.algorithm.admm.xi_slack
-DEFAULT_EPS_PRI     = 1e-3    # matches cfg.algorithm.admm.eps_pri
-DEFAULT_EPS_DUAL    = 1e-3    # matches cfg.algorithm.admm.eps_dual
+DEFAULT_EPS_PRI     = 1.0     # matches cfg.algorithm.admm.eps_pri  (was 1e-3 in Stage-19b)
+DEFAULT_EPS_DUAL    = 1.0     # matches cfg.algorithm.admm.eps_dual (was 1e-3 in Stage-19b)
 
 # Sentinel used by spec builders.  ``gamma_u_db=None`` means "use the
 # value from cfg.algorithm.gamma_db at solver invocation time" — i.e.
