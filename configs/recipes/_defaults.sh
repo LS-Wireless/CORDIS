@@ -61,7 +61,7 @@ CARRIER_FREQ_GHZ="${CARRIER_FREQ_GHZ:-3.5}"
 BANDWIDTH_MHZ="${BANDWIDTH_MHZ:-20.0}"
 
 # ─── Channel ─────────────────────────────────────────────────────────
-SNR_DB="${SNR_DB:-140.0}"        # ≈ 40 W per AP at B=20 MHz, NF=7 dB
+SNR_DB="${SNR_DB:-137.0}"        # ≈ 20 W per AP at B=20 MHz, NF=7 dB
 PILOT_POWER_DB="${PILOT_POWER_DB:-120.0}"
 TAU_P="${TAU_P:-10}"
 ESTIMATION_METHOD="${ESTIMATION_METHOD:-MMSE}"

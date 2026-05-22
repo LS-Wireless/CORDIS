@@ -123,9 +123,11 @@ class ChannelConfig:
     environment: str = "StreetCanyon"
 
     # ── Power budget ──────────────────────────────────────────────────────
-    snr_db: float = 140.0           # P_max / σ²_n [dB] — ≈ 40 W per AP
+    snr_db: float = 137.0           # P_max / σ²_n [dB] — ≈ 20 W per AP
                                     # at B=20 MHz, NF=7 dB, T=290 K
                                     # (σ²_n ≈ -94 dBm noise floor)
+                                    # Matches upper end of 5G mMIMO mid-band
+                                    # micro/small-cell conducted power (2-20 W)
     noise_figure_db: float = 7.0    # Receiver noise figure [dB]
     noise_temp_k: float = 290.0     # Thermal noise temperature [K]
 
@@ -844,11 +846,14 @@ PARAM_REGISTRY: Dict[str, Dict[str, str]] = {
         "help":  ("Transmit SNR = P_max / sigma_n^2; sets per-AP power "
                   "budget.  At B=20 MHz, NF=7 dB, T=290 K, the mapping is "
                   "P_max[W] = 10^((SNR_dB - 124)/10).  Examples: "
-                  "124 dB = 1 W, 134 dB = 10 W, 140 dB = 40 W, 144 dB = 100 W. "
+                  "124 dB = 1 W, 130 dB = 4 W, 134 dB = 10 W, "
+                  "137 dB = 20 W (default), 140 dB = 40 W, 144 dB = 100 W. "
+                  "The default 137 dB matches the upper end of 5G mMIMO "
+                  "mid-band micro/small-cell conducted power (2-20 W).  "
                   "Note: realistic urban-micro pathloss is ~120-130 dB at "
                   "500 m / 3 GHz, so SNR_dB << 120 leaves no link budget"),
         "unit":  "dB",
-        "range": "any real (cell-free typical: 120 to 145; default: 140)",
+        "range": "any real (cell-free typical: 124 to 144; default: 137)",
     },
     "channel.noise_figure_db": {
         "help":  "Receiver noise figure NF added to thermal noise floor",
