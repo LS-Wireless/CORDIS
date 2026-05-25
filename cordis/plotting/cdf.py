@@ -38,6 +38,10 @@ def plot_cdf(
     legend_loc: str = "best",
     only: Optional[Sequence[str]] = None,
     grid: bool = True,
+    gamma_db: Optional[float] = None,
+    show_feasible_only: bool = False,
+    annotate_infeasibility: bool = True,
+    cond_metric: str = "min_sinr_db",
 ) -> Axes:
     """
     Plot empirical CDF of ``metric`` for each algorithm in ``sim_result``.
@@ -65,6 +69,26 @@ def plot_cdf(
     only : sequence of algorithm names, optional
         Restrict the plot to a subset of algorithms.
     grid : bool
+    gamma_db : float, optional
+        Stage 20: if provided, marks γ with a vertical dashed line and
+        enables the infeasibility-tracking features described below.
+    show_feasible_only : bool, default False
+        Stage 20: if True (and ``gamma_db`` is set), draw a SECOND CDF
+        curve per algorithm using only trials where ``cond_metric ≥
+        gamma_db`` (a "feasible-trials only" CDF).  Dashed style so it
+        doesn't visually compete with the all-trials curve.  Useful for
+        CORDIS-ADMM whose unconditional CDF has a long left tail from
+        infeasible drops.
+    annotate_infeasibility : bool, default True
+        Stage 20: if True (and ``gamma_db`` is set), append the
+        infeasibility rate per algorithm to the legend label, formatted
+        as ``"  (inf=X.X%)"``.  Lets the reader see the trade-off
+        between mean performance and constraint-satisfaction rate at a
+        glance, without filtering trials silently.
+    cond_metric : str, default "min_sinr_db"
+        Stage 20: per-trial metric used to classify a trial as
+        feasible (``cond_metric ≥ gamma_db``).  Almost always
+        ``"min_sinr_db"``.
 
     Returns
     -------
@@ -87,8 +111,40 @@ def plot_cdf(
         except (KeyError, ValueError) as e:
             logger.warning("CDF failed for %s on %r: %s", name, metric, e)
             continue
-        ax.plot(xs, fs, **style_for(name))
+
+        # Build legend label, optionally annotated with infeasibility rate.
+        style = dict(style_for(name))
+        if (gamma_db is not None and annotate_infeasibility
+                and ar.has_metric(cond_metric)):
+            inf_rate = ar.infeasibility_rate(gamma_db, metric=cond_metric)
+            base_label = style.get("label", name)
+            style["label"] = f"{base_label}  (inf={100.0*inf_rate:.1f}%)"
+        ax.plot(xs, fs, **style)
+
+        # Optional second curve: feasible-trials-only conditional CDF.
+        if (gamma_db is not None and show_feasible_only
+                and ar.has_metric(cond_metric)):
+            try:
+                xs_f, fs_f = ar.cdf_conditional(
+                    metric, gamma_db, cond_metric=cond_metric,
+                )
+                if xs_f.size > 0:
+                    # Inherit color, drop the label (avoid legend bloat),
+                    # use dashed linestyle to mark "conditional".
+                    cond_style = dict(style)
+                    cond_style.pop("label", None)
+                    cond_style["linestyle"] = "--"
+                    cond_style["alpha"] = 0.7
+                    ax.plot(xs_f, fs_f, **cond_style)
+            except (KeyError, ValueError) as e:
+                logger.warning("conditional CDF failed for %s: %s", name, e)
         n_plotted += 1
+
+    # γ marker (after curves so it stays on top).
+    if gamma_db is not None:
+        ax.axvline(float(gamma_db), color="k", linestyle=":",
+                   linewidth=0.8, alpha=0.6,
+                   label=rf"$\gamma$ = {float(gamma_db):.1f} dB")
 
     if n_plotted == 0:
         logger.warning("plot_cdf: no algorithm provided metric %r", metric)

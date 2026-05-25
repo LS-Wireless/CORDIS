@@ -230,6 +230,77 @@ class AlgorithmResult:
         if source == "scnr": return self.scnr_stats is not None
         return True
 
+    # ── Infeasibility tracking (Stage 20) ────────────────────────────────
+
+    def infeasibility_rate(
+        self,
+        gamma_db:    float,
+        metric:      str = "min_sinr_db",
+    ) -> float:
+        """Fraction of successful trials with ``metric < gamma_db``.
+
+        For an SINR-floor constrained algorithm (CORDIS-ADMM, Centralized),
+        passing ``metric="min_sinr_db"`` with the experiment's γ tells you
+        how often the algorithm failed to meet the per-user SINR floor.
+        Returns 0.0 if there are no successful trials.
+
+        Parameters
+        ----------
+        gamma_db : float
+            Threshold below which a trial is counted as infeasible.
+            Usually ``cfg.algorithm.gamma_db`` for the experiment.
+        metric : str, default "min_sinr_db"
+            Which per-trial metric to compare against ``gamma_db``.
+            Any metric that ``_samples`` can resolve is allowed.
+        """
+        if not self.has_metric(metric):
+            return 0.0
+        arr = self._samples(metric)
+        if arr.size == 0:
+            return 0.0
+        return float(np.mean(arr < gamma_db))
+
+    def feasible_trials_mask(
+        self,
+        gamma_db:    float,
+        metric:      str = "min_sinr_db",
+    ) -> NDArray[np.bool_]:
+        """Boolean mask of successful trials that satisfy ``metric ≥ gamma_db``.
+
+        Same selection logic as :py:meth:`infeasibility_rate` but returns
+        the per-trial mask so callers can plot conditional CDFs etc.
+        """
+        if not self.has_metric(metric):
+            return np.zeros(0, dtype=bool)
+        arr = self._samples(metric)
+        return arr >= gamma_db
+
+    def cdf_conditional(
+        self,
+        metric:       str,
+        gamma_db:     float,
+        cond_metric:  str = "min_sinr_db",
+    ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Empirical CDF of ``metric`` restricted to *feasible* trials.
+
+        A trial is feasible iff ``cond_metric ≥ gamma_db``.  Useful for
+        plotting "CDF among trials where the SINR floor was met" alongside
+        the full CDF — see also :py:meth:`infeasibility_rate` for the
+        complementary scalar.
+        """
+        arr  = self._samples(metric)
+        mask = self.feasible_trials_mask(gamma_db, metric=cond_metric)
+        if mask.size != arr.size:
+            # Different sample counts (shouldn't happen for SINR↔SINR but
+            # could in theory for SCNR↔SINR conditioning).  Be safe.
+            return np.zeros(0), np.zeros(0)
+        xs = np.sort(arr[mask])
+        n  = xs.size
+        if n == 0:
+            return xs, np.zeros(0)
+        fs = np.arange(1, n + 1, dtype=np.float64) / n
+        return xs, fs
+
 
 # =============================================================================
 # SimResult — top-level Monte Carlo result

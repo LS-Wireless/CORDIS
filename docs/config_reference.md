@@ -47,7 +47,7 @@ Generated automatically from `cordis/utils/config.py`.
 | `model` | str | `3gpp_umi_rician` | - | {3gpp_umi_rician} | Channel model identifier string (reserved for future model selection) |
 | `scenario` | str | `UMi` | - | {UMi|UMa|RMa} | 3GPP propagation scenario; controls path loss and LoS probability formulas |
 | `environment` | str | `StreetCanyon` | - | - |  |
-| `snr_db` | float | `140.0` | dB | any real (cell-free typical: 120 to 145; default: 140) | Transmit SNR = P_max / sigma_n^2; sets per-AP power budget.  At B=20 MHz, NF=7 dB, T=290 K, the mapping is P_max[W] = 10^((SNR_dB - 124)/10).  Examples: 124 dB = 1 W, 134 dB = 10 W, 140 dB = 40 W, 144 dB = 100 W. Note: realistic urban-micro pathloss is ~120-130 dB at 500 m / 3 GHz, so SNR_dB << 120 leaves no link budget |
+| `snr_db` | float | `137.0` | dB | any real (cell-free typical: 124 to 144; default: 137) | Transmit SNR = P_max / sigma_n^2; sets per-AP power budget.  At B=20 MHz, NF=7 dB, T=290 K, the mapping is P_max[W] = 10^((SNR_dB - 124)/10).  Examples: 124 dB = 1 W, 130 dB = 4 W, 134 dB = 10 W, 137 dB = 20 W (default), 140 dB = 40 W, 144 dB = 100 W. The default 137 dB matches the upper end of 5G mMIMO mid-band micro/small-cell conducted power (2-20 W).  Note: realistic urban-micro pathloss is ~120-130 dB at 500 m / 3 GHz, so SNR_dB << 120 leaves no link budget |
 | `noise_figure_db` | float | `7.0` | dB | >= 0 | Receiver noise figure NF added to thermal noise floor |
 | `noise_temp_k` | float | `290.0` | K | > 0 (standard: 290) | Thermal noise reference temperature T_0 |
 | `tau_f` | int | `200` | samples | > tau_p + tau_d | TDD frame size tau_f in channel uses; must satisfy tau_f >= tau_p + tau_d |

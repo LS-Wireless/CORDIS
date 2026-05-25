@@ -705,9 +705,27 @@ def solve_cordis_admm(
     snr_scale = Pmax / sigma_n_sq
     sqrt_snr  = float(np.sqrt(snr_scale))
 
-    # ── Warm-start W^(0) from Phase I of CORDIS-Split ───────────────────
-    p1    = design_phase_i(topo, cfg, est, sensing_stats, association)
-    W_cur = p1.build_W_tx_equal_psr(0.5, Pmax)
+    # ── Warm-start W^(0): honor cfg.algorithm.admm.warm_start_from_split ───
+    # Stage 20 (was Stage 19b "dead config field"): when True (default),
+    # run the full CORDIS-Split pipeline to get the optimal PSR-based W;
+    # this typically lands ADMM in a region that already meets γ, dramatically
+    # reducing infeasibility and divergence on hard channel realizations.
+    # When False, fall back to the original equal-PSR (50/50) warm-start.
+    use_split_warmstart = bool(
+        getattr(cfg.algorithm.admm, "warm_start_from_split", True)
+    )
+    if use_split_warmstart:
+        # run_cordis_split returns (W_tx, PhaseIResult, SplitOptResult).
+        # Local import to avoid module-level circular dependency.
+        from cordis.algorithms.split_opt import run_cordis_split
+        W_cur, _phase_i, _split_res = run_cordis_split(
+            topo, cfg, est, sensing_stats, association,
+            sigma_n_sq, Pmax,
+            gamma_u_db=gamma_u_db, omega=omega,
+        )
+    else:
+        p1    = design_phase_i(topo, cfg, est, sensing_stats, association)
+        W_cur = p1.build_W_tx_equal_psr(0.5, Pmax)
 
     # ── Initial l^(0), z^(0), ν^(0) ─────────────────────────────────────
     def _compute_all_l(W_dict):
@@ -1106,8 +1124,14 @@ def solve_cordis_admm(
             if verbose:
                 print(f"  [ADMM] converged at iter {n_iter+1} "
                       f"(slack={slack_norm:.2e})")
+            # Stage 20: return W_best (highest min-SINR iterate seen) rather
+            # than W_cur (just-converged iterate).  In most cases these are
+            # the same — but if an earlier iterate had higher min-SINR with
+            # acceptable consensus, prefer it.  Falls back to W_cur if no
+            # iterate has been recorded as "best" yet (best_r_pri == inf).
+            W_return = W_best if best_r_pri < float("inf") else W_cur
             return ADMMResult(
-                W_tx=W_cur,
+                W_tx=W_return,
                 primal_res_history=prim_hist,
                 dual_res_history=dual_hist,
                 sensing_obj_history=sens_hist,
