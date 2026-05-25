@@ -175,32 +175,44 @@ def _merge_npz_files(
     -------
     merged : dict[str, np.ndarray]
         Merged arrays suitable for ``np.savez_compressed``.
-    skipped_by_reason : dict[str, int]
-        Counts of keys skipped, grouped by reason string (for summary
-        logging).  Keys are reasons like "task_local_axis", "ndim_mismatch".
+    counts : dict[str, int]
+        Per-action counts (for summary logging).  Keys:
+          - "concatenated":      keys merged via straight axis-0 concat
+          - "padded":            keys merged via NaN-padded axis-0 concat
+          - "weighted_avg":      keys merged via weighted mean across tasks
+          - "skipped_task_local":   non-per-trial, varying shapes across tasks
+          - "skipped_ndim_mismatch": inconsistent ndim across tasks
 
-    Merge strategy
-    --------------
-    For each key, the leading-axis semantics determine the merge:
+    Merge strategy (four-way dispatch per key)
+    ------------------------------------------
+    1.  **Per-trial axis** (leading dim equals each task's
+        ``n_trials_total``):
+          - 1D arrays:       concatenate along axis 0.
+          - 2D+ arrays with consistent secondary axes: concatenate axis 0.
+          - 2D+ arrays with mismatched secondary axes: NaN-pad the
+            secondary axes to ``max(secondary_dim)`` across tasks, then
+            concatenate axis 0.  This handles the
+            ``scnr_per_trial_per_pair`` case where ``n_pairs`` varies
+            across tasks (different random topologies → different valid
+            bistatic-link counts).  Integer/float arrays are promoted
+            to float so NaN-fill is valid; booleans pad with False.
 
-    1.  **Per-trial axis** (leading dim == that task's ``n_trials_total``):
-        - 1D arrays:       concatenate along axis 0.
-        - 2D+ arrays with consistent secondary axes: concatenate axis 0.
-        - 2D+ arrays with mismatched secondary axes: NaN-pad the
-          secondary axes to ``max(secondary_dim)`` across tasks, then
-          concatenate axis 0.  This handles the
-          ``scnr_per_trial_per_pair`` case where ``n_pairs`` varies
-          across tasks (different random topologies → different valid
-          bistatic-link counts).  Integer/float arrays are promoted to
-          float so NaN-fill is valid; booleans pad with False.
-
-    2.  **Task-local axis** (leading dim != n_trials_total): these are
-        arrays like ``ergodic_scnr_per_pair`` whose "pair index" has
-        task-local semantics — pair 3 in task 0 is a totally different
-        physical link than pair 3 in task 1.  Concatenating would be
-        semantically wrong, so we SKIP these keys entirely with a clear
-        log message.  Downstream code that needs per-pair detail should
-        load individual per-task files, not the aggregated result.
+    2.  **Non-per-trial axis** (leading dim != n_trials_total — i.e. a
+        per-task aggregate like ``ergodic_sinr_per_user``,
+        ``p_cds_mean``, ``ergodic_scnr_per_pair``).
+          - If all tasks have identical shape → **weighted mean across
+            tasks** with weights = ``n_trials_total`` per task.  This
+            gives the same ergodic statistic as if the trials had all
+            been pooled.  Example: ``ergodic_sinr_per_user`` has shape
+            ``(n_users,)`` because ``n_users`` is config-fixed → every
+            task has the same shape → cross-task weighted mean is the
+            right aggregate.
+          - If shapes vary across tasks → SKIP (task-local axis).
+            Example: ``ergodic_scnr_per_pair`` where ``n_pairs`` is
+            scheduling-dependent.  The "pair index" semantics differ
+            per task — pair 3 in task 0 is a different physical link
+            than pair 3 in task 1.  Inspect per-task .npz files for
+            this detail.
     """
     if not npz_paths:
         return {}, {}
@@ -217,104 +229,177 @@ def _merge_npz_files(
         with np.load(p) as nz:
             per_task_dicts.append({k: nz[k].copy() for k in nz.files})
 
-    # Union of keys across tasks (in practice they should match).
     all_keys: set = set()
     for d in per_task_dicts:
         all_keys.update(d.keys())
 
     merged: Dict[str, np.ndarray] = {}
-    skipped: Dict[str, int] = {}
+    counts: Dict[str, int] = {}
+
+    def _bump(reason: str) -> None:
+        counts[reason] = counts.get(reason, 0) + 1
 
     for key in sorted(all_keys):
-        # Pair each task's array with that task's n_trials.
+        # Collect (array, n_trials) pairs from tasks that have this key
+        # with non-empty content.
         pairs: List[Tuple[np.ndarray, int]] = []
         for d, n_t in zip(per_task_dicts, per_task_n_trials):
             if key not in d:
                 continue
             arr = d[key]
-            if arr.size == 0 or arr.ndim == 0:
+            if arr.size == 0:
                 continue
             pairs.append((arr, n_t))
 
         if not pairs:
-            # Every task had empty array — emit empty placeholder.
             merged[key] = np.array([])
             continue
 
-        # Decide: is leading axis the trial axis?  True iff for every
-        # task, arr.shape[0] == that task's n_trials_total.
-        is_per_trial = all(arr.shape[0] == n_t for arr, n_t in pairs)
-
-        if not is_per_trial:
-            # Task-local leading axis (e.g. per-pair, per-AP-pair).
-            # Cross-task concatenation is semantically wrong here.
-            logger.info(
-                "key %r: leading dim != n_trials_total (task-local axis "
-                "like per-pair); SKIPPED from merged output. "
-                "Inspect per-task .npz files for per-pair detail.",
-                key,
-            )
-            skipped["task_local_axis"] = skipped.get("task_local_axis", 0) + 1
-            continue
-
-        parts = [arr for arr, _ in pairs]
-
-        # ndim must be consistent across tasks (otherwise we can't reconcile).
-        ndims = {p.ndim for p in parts}
+        # ndim must be consistent across tasks.
+        ndims = {arr.ndim for arr, _ in pairs}
         if len(ndims) > 1:
             logger.warning(
                 "key %r: inconsistent ndim across tasks %s; SKIPPED",
                 key, sorted(ndims),
             )
-            skipped["ndim_mismatch"] = skipped.get("ndim_mismatch", 0) + 1
+            _bump("skipped_ndim_mismatch")
+            continue
+        ndim = next(iter(ndims))
+
+        # ── Branch 1: 0-d scalars — always weighted-mean across tasks ──
+        if ndim == 0:
+            result = _weighted_mean_across_tasks(
+                [arr for arr, _ in pairs],
+                [n_t for _, n_t in pairs],
+            )
+            if result is None:
+                _bump("skipped_task_local")
+                continue
+            merged[key] = result
+            _bump("weighted_avg")
+            logger.debug(
+                "key %r: 0-d scalar weighted-averaged across %d tasks",
+                key, len(pairs),
+            )
             continue
 
-        # 1D — straight concatenation; no padding needed.
-        if parts[0].ndim == 1:
-            merged[key] = np.concatenate(parts, axis=0)
-            continue
+        # ── Branch 2: per-trial axis (leading dim matches n_trials) ────
+        is_per_trial = all(arr.shape[0] == n_t for arr, n_t in pairs)
 
-        # 2D+ — pad secondary axes to max, then concatenate.
-        ndim = parts[0].ndim
-        max_secondary = [
-            max(p.shape[ax] for p in parts) for ax in range(1, ndim)
-        ]
-        needs_padding = any(
-            p.shape[ax + 1] != max_secondary[ax]
-            for p in parts for ax in range(ndim - 1)
-        )
+        if is_per_trial:
+            parts = [arr for arr, _ in pairs]
+            # 1D — straight concatenation
+            if ndim == 1:
+                merged[key] = np.concatenate(parts, axis=0)
+                _bump("concatenated")
+                continue
 
-        padded: List[np.ndarray] = []
-        for p in parts:
-            pad_widths = [(0, 0)]  # axis 0 (trial axis): no padding
-            for ax_i, max_sz in enumerate(max_secondary, start=1):
-                pad_widths.append((0, max_sz - p.shape[ax_i]))
-            # Choose fill value by dtype:
-            #   - float        → NaN (downstream uses np.nanmean etc.)
-            #   - int          → promote to float, then NaN
-            #   - bool / other → leave as-is, pad with False/0
-            if np.issubdtype(p.dtype, np.floating):
-                fill = np.nan
-            elif np.issubdtype(p.dtype, np.integer):
-                p    = p.astype(float)
-                fill = np.nan
-            elif np.issubdtype(p.dtype, np.bool_):
-                fill = False
-            else:
-                fill = 0
-            padded.append(np.pad(p, pad_widths, mode="constant",
-                                 constant_values=fill))
-        merged[key] = np.concatenate(padded, axis=0)
-
-        if needs_padding:
-            logger.info(
-                "key %r: secondary axis varies across tasks "
-                "(max=%s); NaN-padded then concatenated along trial axis. "
-                "Use np.nanmean / np.nanpercentile downstream.",
-                key, max_secondary,
+            # 2D+ — possibly NaN-pad secondary axes
+            max_secondary = [
+                max(p.shape[ax] for p in parts) for ax in range(1, ndim)
+            ]
+            needs_padding = any(
+                p.shape[ax + 1] != max_secondary[ax]
+                for p in parts for ax in range(ndim - 1)
             )
 
-    return merged, skipped
+            padded: List[np.ndarray] = []
+            for p in parts:
+                pad_widths = [(0, 0)]
+                for ax_i, max_sz in enumerate(max_secondary, start=1):
+                    pad_widths.append((0, max_sz - p.shape[ax_i]))
+                if np.issubdtype(p.dtype, np.floating):
+                    fill = np.nan
+                elif np.issubdtype(p.dtype, np.integer):
+                    p    = p.astype(float)
+                    fill = np.nan
+                elif np.issubdtype(p.dtype, np.bool_):
+                    fill = False
+                else:
+                    fill = 0
+                padded.append(np.pad(p, pad_widths, mode="constant",
+                                     constant_values=fill))
+            merged[key] = np.concatenate(padded, axis=0)
+            if needs_padding:
+                _bump("padded")
+                logger.info(
+                    "key %r: secondary axis varies across tasks "
+                    "(max=%s); NaN-padded then concatenated along trial "
+                    "axis.  Use np.nanmean / np.nanpercentile downstream.",
+                    key, max_secondary,
+                )
+            else:
+                _bump("concatenated")
+            continue
+
+        # ── Branch 3: per-task aggregate (NOT per-trial) ──
+        # Decide between weighted-mean (same shape) and skip (varying).
+        shapes = {arr.shape for arr, _ in pairs}
+        if len(shapes) == 1:
+            # Same shape across all tasks → cross-task weighted mean.
+            result = _weighted_mean_across_tasks(
+                [arr for arr, _ in pairs],
+                [n_t for _, n_t in pairs],
+            )
+            if result is None:
+                _bump("skipped_task_local")
+                continue
+            merged[key] = result
+            _bump("weighted_avg")
+            logger.info(
+                "key %r: per-task aggregate, shape %s consistent across "
+                "%d tasks → cross-task weighted mean "
+                "(weights = n_trials per task).",
+                key, next(iter(shapes)), len(pairs),
+            )
+        else:
+            # Shapes differ across tasks → task-local axis, skip.
+            logger.info(
+                "key %r: shapes vary across tasks %s; SKIPPED from merged "
+                "output (task-local axis like per-pair).  Inspect "
+                "individual per-task .npz files for per-pair detail.",
+                key, sorted(shapes),
+            )
+            _bump("skipped_task_local")
+
+    return merged, counts
+
+
+def _weighted_mean_across_tasks(
+    parts:               List[np.ndarray],
+    n_trials_per_part:   List[int],
+) -> Optional[np.ndarray]:
+    """NaN-aware weighted mean of same-shape arrays across tasks.
+
+    Weights are the per-task n_trials.  Float/int/bool inputs all get
+    promoted to float in the output.  Returns ``None`` if the total
+    weight is non-positive (no valid tasks).
+
+    For positions where every task had NaN, the result is NaN; for
+    positions where some tasks had NaN, NaN entries are ignored and the
+    weight normalisation excludes them.
+    """
+    if not parts:
+        return None
+    arrs = [np.asarray(p, dtype=float) for p in parts]
+    arr_stack = np.stack(arrs, axis=0)  # (n_tasks, *common_shape)
+    weights = np.asarray(n_trials_per_part, dtype=float)
+    if float(weights.sum()) <= 0.0:
+        return None
+    # Broadcast weights to match arr_stack shape.
+    w_shape = [arr_stack.shape[0]] + [1] * (arr_stack.ndim - 1)
+    weights_b = np.broadcast_to(weights.reshape(w_shape),
+                                arr_stack.shape).copy()
+    # Mask of valid (non-NaN) entries.
+    valid = ~np.isnan(arr_stack)
+    arr_filled = np.where(valid, arr_stack, 0.0)
+    weights_eff = np.where(valid, weights_b, 0.0)
+    weighted_sum = (arr_filled * weights_eff).sum(axis=0)
+    weight_sum   = weights_eff.sum(axis=0)
+    # Safe division: where every task had NaN, output stays NaN.
+    out = np.full_like(weighted_sum, np.nan)
+    return np.divide(weighted_sum, weight_sum,
+                     out=out, where=weight_sum > 0)
 
 
 def _merge_json_sidecars_from_loaded(
@@ -736,11 +821,29 @@ def main(argv: Optional[List[str]] = None) -> int:
         logger.info("  sweep values:       %d", summary.get("n_values", 0))
         logger.info("  trials per value:   %d", summary.get("n_trials", 0))
     if summary.get("skipped"):
-        logger.info("  skipped keys:       %s", summary["skipped"])
-        logger.info(
-            "    (these have task-local axis semantics like per-pair; "
-            "inspect individual per-task .npz files for that detail)"
-        )
+        actions = summary["skipped"]
+        merged_n = (actions.get("concatenated", 0)
+                    + actions.get("padded", 0)
+                    + actions.get("weighted_avg", 0))
+        skipped_n = (actions.get("skipped_task_local", 0)
+                     + actions.get("skipped_ndim_mismatch", 0))
+        logger.info("  keys merged:        %d  "
+                    "(concat=%d, padded=%d, weighted_avg=%d)",
+                    merged_n,
+                    actions.get("concatenated", 0),
+                    actions.get("padded", 0),
+                    actions.get("weighted_avg", 0))
+        if skipped_n:
+            logger.info("  keys skipped:       %d  "
+                        "(task_local=%d, ndim_mismatch=%d)",
+                        skipped_n,
+                        actions.get("skipped_task_local", 0),
+                        actions.get("skipped_ndim_mismatch", 0))
+            logger.info(
+                "    (skipped keys have task-local axis like per-pair "
+                "with varying length; inspect individual per-task .npz "
+                "files for that detail)"
+            )
     return 0
 
 
