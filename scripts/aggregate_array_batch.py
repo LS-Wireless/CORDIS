@@ -3,34 +3,53 @@
 scripts/aggregate_array_batch.py
 ================================
 
-Stage 21 — Aggregate per-task ExperimentResult outputs from a SLURM
-job-array run into a single merged ExperimentResult.
+Aggregate per-task ExperimentResult outputs from a SLURM job-array run
+into a single merged result.
 
-Directory layout (Stage 21 revision):
+Directory layout (Stage 21 experiment-first):
 
     results/exp_<name>/
         array_<jobid>_task_0/         (per-task output)
             manifest.json
             result.npz                 (single-kind) OR
             result_<axis>_<v>.npz × N  (sweep-kind)
-            result.json
+            result.json                (or result_<axis>_<v>.json × N)
             logs/run.log
         array_<jobid>_task_1/
             ...
-        ...
         array_<jobid>_aggregated/     (created by this script)
             manifest.json
-            result.npz / result_<axis>_<v>.npz × N (merged)
-            result.json
+            result.npz / result_<axis>_<v>.npz × N (merged arrays)
+            result.json / result_<axis>_<v>.json   (merged sidecar)
 
 Per-task seed isolation comes from BASE_SEED + ARRAY_TASK_ID (set by
-_array_common.sh), so trial streams across tasks are disjoint.  The
-aggregator concatenates per-trial arrays in each SimResult to produce
-the merged ExperimentResult.
+_array_common.sh), so trial streams across tasks are disjoint.  This
+aggregator concatenates per-trial arrays along axis 0 (the trial
+dimension) to produce the merged ExperimentResult.
+
+DESIGN NOTE — pure-numpy / no cordis import
+-------------------------------------------
+This aggregator deliberately does NOT import anything from the
+``cordis`` package.  The .npz/.json/manifest.json format is regular
+enough to merge with plain numpy + json, so we keep this script as a
+lightweight utility that runs in any environment with numpy.  This
+matters because:
+
+  - The full cordis import chain pulls in cvxpy, matplotlib, and other
+    heavy deps the user may not have on their laptop.
+  - Some transitively-imported modules use ``numpy.typing.NDArray``,
+    which can fail on older numpy versions.
+  - The aggregator is a leaf utility — coupling it to the full
+    simulation framework is gratuitous.
+
+The format is documented in ``cordis/simulation/result.py`` (SimResult
+.save/.load) and ``cordis/experiments/result.py`` (ExperimentResult
+.save/.load).  Keep them in sync — if either changes the on-disk
+format, update this script.
 
 Usage::
 
-    # Most common: aggregate the array identified by its experiment + job ID
+    # Most common: aggregate the array identified by experiment + job ID
     python3 scripts/aggregate_array_batch.py sinr_cdf 12345
 
     # Override the results root if you've reorganised
@@ -55,19 +74,13 @@ aggregated/ dir (it will be overwritten).
 from __future__ import annotations
 
 import argparse
-import dataclasses
+import json
 import logging
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-
-# Make 'cordis' importable when run as `python3 scripts/aggregate_array_batch.py`
-# from the repo root, without requiring PYTHONPATH=$(pwd) to be set.
-# Matches the idiom used by validate_*.py and regenerate_experiment_scripts.py.
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
 
 import numpy as np
 
@@ -106,214 +119,385 @@ def find_per_task_dirs(
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Merge helpers
+# Pure-numpy merge helpers
 # ─────────────────────────────────────────────────────────────────────
 
-def _concat_arrays(parts: List[np.ndarray]) -> np.ndarray:
-    """Concatenate ndarrays along axis 0; return empty if no parts."""
-    if not parts:
-        return np.array([])
-    return np.concatenate(parts, axis=0)
+def _read_manifest(task_dir: Path) -> Dict[str, Any]:
+    """Read manifest.json from a per-task directory.
 
-
-def _merge_stats(per_task_stats: List[Any]) -> Optional[Any]:
-    """Merge per-task SINRStatistics / SCNRStatistics dataclasses.
-
-    Concatenate ndarray fields along axis 0; non-array fields take
-    the value from the first task.  Returns None if every input is None.
+    Raises FileNotFoundError if missing (caller decides whether to
+    skip the task or abort).
     """
-    non_none = [s for s in per_task_stats if s is not None]
-    if not non_none:
-        return None
-    first = non_none[0]
-    fields_info = dataclasses.fields(first)
-    merged: Dict[str, Any] = {}
-    for f in fields_info:
-        parts = [getattr(s, f.name) for s in non_none]
-        if all(isinstance(p, np.ndarray) for p in parts):
-            try:
-                merged[f.name] = np.concatenate(parts, axis=0)
-            except ValueError:
-                # Shape mismatch on non-leading axes — fall back to first.
-                merged[f.name] = parts[0]
-        else:
-            merged[f.name] = parts[0]
-    return type(first)(**merged)
+    p = task_dir / "manifest.json"
+    if not p.exists():
+        raise FileNotFoundError(f"missing manifest.json in {task_dir}")
+    with open(p, "r") as f:
+        return json.load(f)
 
 
-def _merge_sim_results(per_task_sr: List[Any]) -> Any:
-    """Build a single SimResult by concatenating per-task arrays.
+def _validate_manifests(manifests: List[Tuple[Path, Dict[str, Any]]]) -> str:
+    """Sanity-check that all tasks ran the same experiment kind + name.
 
-    Assumes every input has the same algorithm_results keys; the caller
-    should have validated this before calling here.
+    Returns the common ``kind`` string.
     """
-    if not per_task_sr:
-        raise ValueError("no SimResults to merge")
-    first = per_task_sr[0]
-    algo_names = list(first.algorithm_results.keys())
-
-    merged_algo_results: Dict[str, Any] = {}
-    for algo in algo_names:
-        per_task_ar = [sr.algorithm_results[algo] for sr in per_task_sr
-                       if algo in sr.algorithm_results]
-        first_ar = per_task_ar[0]
-
-        # Per-trial diagnostic arrays.
-        iters        = _concat_arrays([np.asarray(ar.iters)        for ar in per_task_ar])
-        runtime_s    = _concat_arrays([np.asarray(ar.runtime_s)    for ar in per_task_ar])
-        converged    = _concat_arrays([np.asarray(ar.converged)    for ar in per_task_ar])
-        # power_ratios is 2D (n_trials × n_aps) — also concatenate axis 0.
-        pr_parts = [np.asarray(ar.power_ratios) for ar in per_task_ar
-                    if np.asarray(ar.power_ratios).size > 0]
-        if pr_parts:
-            try:
-                power_ratios = np.concatenate(pr_parts, axis=0)
-            except ValueError:
-                power_ratios = pr_parts[0]
-        else:
-            power_ratios = np.zeros((0, 0))
-
-        # Per-trial stats.
-        sinr_stats = _merge_stats([ar.sinr_stats for ar in per_task_ar])
-        scnr_stats = _merge_stats([ar.scnr_stats for ar in per_task_ar])
-
-        # Counts + scalars.
-        n_trials_total = sum(int(ar.n_trials_total) for ar in per_task_ar)
-        n_succeeded    = sum(int(ar.n_succeeded)    for ar in per_task_ar)
-        n_failed       = sum(int(ar.n_failed)       for ar in per_task_ar)
-        runtime_total  = float(np.sum(runtime_s)) if runtime_s.size else 0.0
-        iters_mean     = float(np.mean(iters))     if iters.size     else 0.0
-        runtime_mean   = float(np.mean(runtime_s)) if runtime_s.size else 0.0
-        conv_rate      = float(np.mean(converged)) if converged.size else 0.0
-        fail_rate      = (n_failed / n_trials_total) if n_trials_total else 0.0
-
-        AlgorithmResultCls = type(first_ar)
-        merged_algo_results[algo] = AlgorithmResultCls(
-            spec=first_ar.spec,
-            n_trials_total=n_trials_total,
-            n_succeeded=n_succeeded,
-            n_failed=n_failed,
-            sinr_stats=sinr_stats,
-            scnr_stats=scnr_stats,
-            iters=iters,
-            runtime_s=runtime_s,
-            converged=converged,
-            power_ratios=power_ratios,
-            convergence_rate=conv_rate,
-            failure_rate=fail_rate,
-            iters_mean=iters_mean,
-            runtime_mean_s=runtime_mean,
-            runtime_total_s=runtime_total,
-        )
-
-    # Build merged SimResult.  Reuse the first task's cfg/runner_cfg/specs
-    # (they should all match — see _validate_consistency above) and
-    # replace n_trials with the aggregate.
-    SimResultCls = type(first)
-    init_kwargs: Dict[str, Any] = {
-        "cfg":                first.cfg,
-        "algorithm_results":  merged_algo_results,
-        "runtime_total_s":    sum(float(sr.runtime_total_s) for sr in per_task_sr),
-    }
-    # Optional fields the dataclass may carry — handle gracefully.
-    for opt in ("n_trials", "seed", "runner_cfg", "algorithm_specs", "metadata"):
-        if hasattr(first, opt):
-            init_kwargs[opt] = getattr(first, opt)
-    if "n_trials" in init_kwargs:
-        init_kwargs["n_trials"] = sum(int(getattr(sr, "n_trials", 0))
-                                      for sr in per_task_sr)
-    return SimResultCls(**init_kwargs)
-
-
-# ─────────────────────────────────────────────────────────────────────
-# ExperimentResult merge dispatch
-# ─────────────────────────────────────────────────────────────────────
-
-def _validate_consistency(per_task_er: List[Any]) -> None:
-    """Reject heterogeneous batches: every task must have the same
-    experiment kind + same algorithms + same sweep axis (if any)."""
-    if not per_task_er:
-        return
-    first = per_task_er[0]
-    for k, er in enumerate(per_task_er[1:], start=1):
-        if er.kind != first.kind:
-            raise ValueError(
-                f"task {k} has kind={er.kind!r}, but task 0 has "
-                f"kind={first.kind!r}.  Heterogeneous arrays not "
-                f"supported — re-run with consistent experiment specs."
-            )
-        if er.name != first.name:
-            raise ValueError(
-                f"task {k} has experiment name={er.name!r}, but "
-                f"task 0 has {first.name!r}"
-            )
-        if first.kind == "sweep":
-            # Sweep values must match across tasks (otherwise we
-            # can't pair them up for merging).
-            first_vals  = sorted(first.sweep_results.keys())
-            this_vals   = sorted(er.sweep_results.keys())
-            if first_vals != this_vals:
-                raise ValueError(
-                    f"task {k} sweep values {this_vals} differ from "
-                    f"task 0 values {first_vals}.  All array tasks must "
-                    f"have run the same sweep grid."
-                )
-
-
-def merge_experiment_results(per_task_er: List[Any]) -> Any:
-    """Merge a list of per-task ExperimentResults into a single one.
-
-    Dispatches on ``kind``:
-      - "single": merge the single sim_result
-      - "sweep":  merge sim_results per axis value
-      - "trace":  not supported (arrays excluded from trace experiments)
-    """
-    if not per_task_er:
-        raise ValueError("no ExperimentResults to merge")
-    _validate_consistency(per_task_er)
-
-    first = per_task_er[0]
-    ExperimentResultCls = type(first)
-
-    # Start from first task's metadata (we'll update trial-counting fields).
-    merged_metadata = dict(getattr(first, "metadata", {}) or {})
-    merged_metadata["aggregated_from_n_tasks"] = len(per_task_er)
-    merged_metadata["aggregator_version"] = "stage21-v2"
-
-    if first.kind == "single":
-        merged_sr = _merge_sim_results([er.sim_result for er in per_task_er])
-        return ExperimentResultCls(
-            name=first.name,
-            kind="single",
-            sim_result=merged_sr,
-            metadata=merged_metadata,
-        )
-
-    elif first.kind == "sweep":
-        sweep_values = sorted(first.sweep_results.keys())
-        merged_sweep: Dict[float, Any] = {}
-        for v in sweep_values:
-            per_task_sr_at_v = [er.sweep_results[v] for er in per_task_er]
-            merged_sweep[v] = _merge_sim_results(per_task_sr_at_v)
-        return ExperimentResultCls(
-            name=first.name,
-            kind="sweep",
-            sweep_results=merged_sweep,
-            sweep_axis=first.sweep_axis,
-            metadata=merged_metadata,
-        )
-
-    elif first.kind == "trace":
+    if not manifests:
+        raise ValueError("no manifests to validate")
+    first_path, first_man = manifests[0]
+    first_kind = first_man.get("kind")
+    first_name = first_man.get("name")
+    if first_kind is None or first_name is None:
         raise ValueError(
-            f"trace-kind experiment {first.name!r} cannot be aggregated "
+            f"manifest in {first_path.parent.name} missing 'kind' or 'name'"
+        )
+    for path, man in manifests[1:]:
+        if man.get("kind") != first_kind:
+            raise ValueError(
+                f"task {path.parent.name} has kind={man.get('kind')!r}, "
+                f"but task {first_path.parent.name} has kind={first_kind!r}. "
+                f"All tasks must run the same experiment kind."
+            )
+        if man.get("name") != first_name:
+            raise ValueError(
+                f"task {path.parent.name} has experiment name={man.get('name')!r}, "
+                f"but task {first_path.parent.name} has {first_name!r}"
+            )
+    return first_kind
+
+
+def _merge_npz_files(npz_paths: List[Path]) -> Dict[str, np.ndarray]:
+    """Concatenate same-keyed arrays from a list of .npz files along
+    axis 0 (the trial dimension).
+
+    Returns a dict of merged arrays suitable for ``np.savez_compressed``.
+
+    Behaviour:
+      - Keys present in any task are emitted.
+      - Empty/scalar arrays are skipped during concatenation.
+      - On shape mismatch on non-leading axes (rare; would indicate
+        a config drift across tasks), keeps the first task's value
+        and logs a warning.
+    """
+    if not npz_paths:
+        return {}
+
+    # Load all npz files into memory dicts (close immediately to release
+    # file handles — NpzFile is lazy and keeps the file open).
+    per_task_dicts: List[Dict[str, np.ndarray]] = []
+    for p in npz_paths:
+        with np.load(p) as nz:
+            per_task_dicts.append({k: nz[k].copy() for k in nz.files})
+
+    # Union of keys across all tasks (in practice they should match).
+    all_keys: set = set()
+    for d in per_task_dicts:
+        all_keys.update(d.keys())
+
+    merged: Dict[str, np.ndarray] = {}
+    for key in sorted(all_keys):
+        parts: List[np.ndarray] = []
+        for d in per_task_dicts:
+            if key not in d:
+                continue
+            arr = d[key]
+            # Skip empty arrays — they don't contribute to the merge
+            # and can cause concatenation issues.
+            if arr.size == 0:
+                continue
+            parts.append(arr)
+        if not parts:
+            # Every task had an empty array for this key — emit empty.
+            merged[key] = np.array([])
+            continue
+        try:
+            merged[key] = np.concatenate(parts, axis=0)
+        except ValueError as e:
+            logger.warning(
+                "key %r: concatenation failed (%s); keeping first task's value",
+                key, e,
+            )
+            merged[key] = parts[0]
+    return merged
+
+
+def _merge_json_sidecars(
+    json_paths:     List[Path],
+    merged_arrays:  Dict[str, np.ndarray],
+) -> Dict[str, Any]:
+    """Merge result.json sidecars: keep first task's metadata, recompute
+    per-algorithm scalars from the merged arrays.
+
+    ``merged_arrays`` is the dict returned by :func:`_merge_npz_files`,
+    used to recompute means/totals from the concatenated trial data.
+    """
+    if not json_paths:
+        return {}
+    sidecars: List[Dict[str, Any]] = []
+    for p in json_paths:
+        with open(p, "r") as f:
+            sidecars.append(json.load(f))
+
+    # Start from first task as the base — cfg, runner_cfg, algorithm_specs
+    # should be identical across tasks (verified by _validate_manifests).
+    base = dict(sidecars[0])
+
+    # Recompute per_algorithm_scalars: counts sum across tasks; means/
+    # totals are recomputed from the merged arrays for precision (no
+    # weighted-average accumulation error).
+    per_algo_merged: Dict[str, Dict[str, Any]] = {}
+    algo_names = list(base.get("per_algorithm_scalars", {}).keys())
+
+    for algo in algo_names:
+        per_algo_per_task = [
+            sc.get("per_algorithm_scalars", {}).get(algo, {})
+            for sc in sidecars
+        ]
+        # Counts
+        n_trials_total = sum(int(p.get("n_trials_total", 0))
+                             for p in per_algo_per_task)
+        n_succeeded    = sum(int(p.get("n_succeeded", 0))
+                             for p in per_algo_per_task)
+        n_failed       = sum(int(p.get("n_failed", 0))
+                             for p in per_algo_per_task)
+
+        # Recompute means from the merged arrays.
+        iters     = merged_arrays.get(f"{algo}/iters")
+        runtime_s = merged_arrays.get(f"{algo}/runtime_s")
+        converged = merged_arrays.get(f"{algo}/converged")
+
+        iters_mean      = (float(np.mean(iters))     if iters     is not None
+                           and iters.size     else 0.0)
+        runtime_mean    = (float(np.mean(runtime_s)) if runtime_s is not None
+                           and runtime_s.size else 0.0)
+        runtime_total   = (float(np.sum(runtime_s))  if runtime_s is not None
+                           and runtime_s.size else 0.0)
+        conv_rate       = (float(np.mean(converged)) if converged is not None
+                           and converged.size else 0.0)
+        fail_rate       = ((n_failed / n_trials_total)
+                           if n_trials_total > 0 else 0.0)
+
+        merged_algo = dict(per_algo_per_task[0])  # carry through opt'l fields
+        merged_algo.update({
+            "n_trials_total":   n_trials_total,
+            "n_succeeded":      n_succeeded,
+            "n_failed":         n_failed,
+            "convergence_rate": conv_rate,
+            "failure_rate":     fail_rate,
+            "iters_mean":       iters_mean,
+            "runtime_mean_s":   runtime_mean,
+            "runtime_total_s":  runtime_total,
+        })
+        per_algo_merged[algo] = merged_algo
+
+    base["per_algorithm_scalars"] = per_algo_merged
+    base["saved_at_iso"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return base
+
+
+def _merge_one_unit(
+    task_dirs:    List[Path],
+    npz_filename: str,
+    out_npz:      Path,
+    out_json:     Path,
+) -> int:
+    """Merge a single (npz + sidecar json) pair across all task dirs.
+
+    For 'single'-kind: npz_filename = "result.npz" (per task dir).
+    For 'sweep'-kind:  npz_filename = "result_<axis>_<v>.npz" (per value).
+
+    Returns the merged n_trials_total (sum of one algorithm — they
+    should all be equal, but the first encountered key wins).
+    """
+    json_filename = npz_filename.replace(".npz", ".json")
+    npz_paths  = [d / npz_filename for d in task_dirs]
+    json_paths = [d / json_filename for d in task_dirs]
+
+    # Filter to only existing files (warn on missing).
+    valid_indices: List[int] = []
+    for i, (np_p, js_p) in enumerate(zip(npz_paths, json_paths)):
+        if not np_p.exists():
+            logger.warning("missing %s in %s — skipping task",
+                           npz_filename, task_dirs[i].name)
+            continue
+        if not js_p.exists():
+            logger.warning("missing %s in %s — skipping task",
+                           json_filename, task_dirs[i].name)
+            continue
+        valid_indices.append(i)
+
+    if not valid_indices:
+        logger.error("no tasks have %s — cannot merge", npz_filename)
+        return 0
+
+    valid_npz_paths  = [npz_paths[i]  for i in valid_indices]
+    valid_json_paths = [json_paths[i] for i in valid_indices]
+
+    merged_arrays  = _merge_npz_files(valid_npz_paths)
+    merged_sidecar = _merge_json_sidecars(valid_json_paths, merged_arrays)
+
+    # Save.
+    out_npz.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(out_npz, **merged_arrays)
+    with open(out_json, "w") as f:
+        json.dump(merged_sidecar, f, indent=2, default=_json_default)
+
+    # Report.
+    n_trials = 0
+    for algo, scalars in merged_sidecar.get("per_algorithm_scalars", {}).items():
+        n_trials = int(scalars.get("n_trials_total", 0))
+        break  # all algorithms have same n_trials
+    return n_trials
+
+
+def _json_default(obj: Any) -> Any:
+    """JSON encoder fallback for numpy scalars / arrays."""
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Top-level merge — dispatches on kind
+# ─────────────────────────────────────────────────────────────────────
+
+def merge_experiment_results(
+    task_dirs: List[Path],
+    out_dir:   Path,
+) -> Dict[str, Any]:
+    """Merge per-task ExperimentResult outputs into ``out_dir``.
+
+    Dispatches on the experiment ``kind`` (from manifest.json):
+      - "single": merges result.npz + result.json across tasks.
+      - "sweep":  merges result_<axis>_<v>.npz + .json per axis value.
+      - "trace":  rejected (single trial, not parallelizable).
+
+    Returns a summary dict suitable for logging.
+    """
+    if not task_dirs:
+        raise ValueError("no task directories to merge")
+
+    # Read all manifests up front for validation.
+    manifests: List[Tuple[Path, Dict[str, Any]]] = []
+    for d in task_dirs:
+        try:
+            manifests.append((d, _read_manifest(d)))
+        except FileNotFoundError as e:
+            logger.warning("%s — skipping task", e)
+    if not manifests:
+        raise ValueError("no per-task manifests found — nothing to merge")
+
+    kind = _validate_manifests(manifests)
+    # Tasks that survived the manifest check
+    valid_task_dirs = [path.parent for path, _ in
+                       [(p, m) for p, m in manifests]]
+    # The above just unpacks for clarity; equivalent to:
+    valid_task_dirs = [p for p, _ in manifests]
+
+    first_manifest = manifests[0][1]
+    exp_name = first_manifest["name"]
+
+    # Build merged manifest: copy first task's base, mark aggregation in metadata.
+    merged_manifest: Dict[str, Any] = {
+        "name":     exp_name,
+        "kind":     kind,
+        "metadata": {
+            **(first_manifest.get("metadata") or {}),
+            "aggregated_from_n_tasks": len(valid_task_dirs),
+            "aggregator_version":      "stage21-v2-pure-numpy",
+            "aggregated_at_iso":       datetime.now(timezone.utc)
+                                          .isoformat(timespec="seconds"),
+        },
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    summary: Dict[str, Any] = {"kind": kind, "n_tasks": len(valid_task_dirs)}
+
+    if kind == "single":
+        n_trials = _merge_one_unit(
+            task_dirs    = valid_task_dirs,
+            npz_filename = "result.npz",
+            out_npz      = out_dir / "result.npz",
+            out_json     = out_dir / "result.json",
+        )
+        summary["n_trials"] = n_trials
+
+    elif kind == "sweep":
+        axis_info = first_manifest.get("axis")
+        if axis_info is None:
+            raise ValueError(
+                f"manifest in {valid_task_dirs[0].name} is kind='sweep' but "
+                f"has no 'axis' field — cannot determine sweep file names."
+            )
+        axis_name = axis_info.get("name")
+        axis_values = axis_info.get("values", [])
+        if not axis_name or not axis_values:
+            raise ValueError(
+                f"sweep manifest axis info malformed: {axis_info!r}"
+            )
+
+        merged_manifest["axis"] = axis_info
+        per_value_n_trials: List[int] = []
+        for v in axis_values:
+            npz_filename = _value_filename(axis_name, v)
+            out_npz_v   = out_dir / npz_filename
+            out_json_v  = out_dir / npz_filename.replace(".npz", ".json")
+            logger.info("merging sweep value %s=%s ...", axis_name, v)
+            n_trials_v = _merge_one_unit(
+                task_dirs    = valid_task_dirs,
+                npz_filename = npz_filename,
+                out_npz      = out_npz_v,
+                out_json     = out_json_v,
+            )
+            per_value_n_trials.append(n_trials_v)
+        summary["axis_name"]   = axis_name
+        summary["n_values"]    = len(axis_values)
+        summary["n_trials"]    = per_value_n_trials[0] if per_value_n_trials else 0
+
+    elif kind == "trace":
+        raise ValueError(
+            f"trace-kind experiment {exp_name!r} cannot be aggregated "
             f"across array tasks (single trial per run).  Use a "
             f"single-job .sub script for trace experiments."
         )
 
     else:
         raise ValueError(
-            f"unknown ExperimentResult kind {first.kind!r} in task 0"
+            f"unknown ExperimentResult kind {kind!r} in {valid_task_dirs[0].name}"
         )
+
+    # Write merged manifest.
+    with open(out_dir / "manifest.json", "w") as f:
+        json.dump(merged_manifest, f, indent=2, default=_json_default)
+
+    return summary
+
+
+def _fmt_value(v: Any) -> str:
+    """Format a numeric sweep value for use in a filename.
+
+    Mirrors ``cordis.experiments.result._fmt_value`` so file names match.
+    """
+    # Match the cordis idiom: integers as-is, floats with up to 6 digits,
+    # negative sign retained.  If the value is exactly an int, format as int.
+    if isinstance(v, (int, np.integer)):
+        return str(int(v))
+    f = float(v)
+    if f.is_integer():
+        return str(int(f))
+    # Trim trailing zeros from a fixed-point representation.
+    s = f"{f:.6f}".rstrip("0").rstrip(".")
+    return s
+
+
+def _value_filename(axis_name: str, value: Any) -> str:
+    """Match ``cordis.experiments.result._value_filename``."""
+    return f"result_{axis_name}_{_fmt_value(value)}.npz"
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -399,68 +583,26 @@ def main(argv: Optional[List[str]] = None) -> int:
         logger.info("--dry-run: not loading/merging.")
         return 0
 
-    # Load.  Import lazily — only need it for the real run, not for
-    # --dry-run or --help.
+    out_dir = exp_dir / f"array_{array_id}_aggregated"
+
     try:
-        from cordis.experiments.result import ExperimentResult
-    except ImportError as e:
-        logger.error(
-            "cordis.experiments.result.ExperimentResult not importable: %s. "
-            "Run from the repo root, or set PYTHONPATH=$(pwd).",
-            e,
-        )
-        return 2
-
-    per_task_er: List[Any] = []
-    for d in task_dirs:
-        try:
-            per_task_er.append(ExperimentResult.load(d))
-        except FileNotFoundError as e:
-            logger.warning("task %s missing artefacts: %s", d.name, e)
-        except Exception as e:
-            logger.warning("task %s failed to load: %s", d.name, e)
-
-    if not per_task_er:
-        logger.error("no per-task results loaded successfully")
-        return 1
-
-    logger.info("loaded %d / %d task results successfully",
-                len(per_task_er), len(task_dirs))
-
-    # Merge.
-    try:
-        merged = merge_experiment_results(per_task_er)
-    except ValueError as e:
+        summary = merge_experiment_results(task_dirs, out_dir)
+    except (ValueError, FileNotFoundError) as e:
         logger.error("merge failed: %s", e)
         return 1
-
-    # Save.
-    out_dir = exp_dir / f"array_{array_id}_aggregated"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    merged.save(out_dir)
+    except Exception as e:
+        logger.error("unexpected error during merge: %s", e, exc_info=True)
+        return 2
 
     logger.info("wrote aggregated ExperimentResult to: %s", out_dir)
-    logger.info("  kind:               %s", merged.kind)
-    if merged.kind == "single":
-        sr = merged.sim_result
-        n_trials = getattr(sr, "n_trials",
-                           sum(ar.n_trials_total
-                               for ar in sr.algorithm_results.values()))
-        logger.info("  total trials:       %d", n_trials)
-        logger.info("  algorithms:         %s",
-                    ", ".join(sr.algorithm_results.keys()))
-    elif merged.kind == "sweep":
-        n_values = len(merged.sweep_results)
-        first_sr = next(iter(merged.sweep_results.values()))
-        n_trials_per_v = getattr(first_sr, "n_trials",
-                                 sum(ar.n_trials_total
-                                     for ar in first_sr.algorithm_results.values()))
-        logger.info("  sweep axis:         %s",
-                    getattr(merged.sweep_axis, "name", "?"))
-        logger.info("  sweep values:       %d", n_values)
-        logger.info("  trials per value:   %d", n_trials_per_v)
-        logger.info("  algorithms:         %s",
-                    ", ".join(first_sr.algorithm_results.keys()))
+    logger.info("  kind:               %s", summary.get("kind"))
+    logger.info("  tasks merged:       %d", summary.get("n_tasks", 0))
+    if summary.get("kind") == "single":
+        logger.info("  total trials:       %d", summary.get("n_trials", 0))
+    elif summary.get("kind") == "sweep":
+        logger.info("  sweep axis:         %s", summary.get("axis_name"))
+        logger.info("  sweep values:       %d", summary.get("n_values", 0))
+        logger.info("  trials per value:   %d", summary.get("n_trials", 0))
     return 0
 
 

@@ -229,7 +229,16 @@ def test_07_aggregator_signature():
         "aggregator must expose find_per_task_dirs(exp_dir, array_id) -> [Path]"
     )
     assert hasattr(mod, "merge_experiment_results"), (
-        "aggregator must expose merge_experiment_results(per_task_er)"
+        "aggregator must expose merge_experiment_results(task_dirs, out_dir)"
+    )
+    # The aggregator should be pure-numpy — no `cordis` import.
+    # This protects against future regressions where someone adds a
+    # `from cordis...` line and re-introduces the heavy import chain.
+    src = agg_path.read_text()
+    assert "import cordis" not in src and "from cordis" not in src, (
+        "aggregate_array_batch.py must NOT import cordis — it's a "
+        "leaf utility that should work in any env with numpy + json. "
+        "Found a 'cordis' import; remove it."
     )
     sig = inspect.signature(mod.find_per_task_dirs)
     params = list(sig.parameters.keys())
