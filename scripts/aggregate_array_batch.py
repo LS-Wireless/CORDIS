@@ -174,14 +174,21 @@ def _merge_npz_files(
     Returns
     -------
     merged : dict[str, np.ndarray]
-        Merged arrays suitable for ``np.savez_compressed``.
+        Merged arrays suitable for ``np.savez_compressed``.  Every key
+        present in any task's npz appears in the result — nothing is
+        silently dropped, so downstream ``SimResult.load()`` will find
+        all the keys it expects in ``_SINR_ARRAY_FIELDS`` and
+        ``_SCNR_ARRAY_FIELDS``.
     counts : dict[str, int]
         Per-action counts (for summary logging).  Keys:
-          - "concatenated":      keys merged via straight axis-0 concat
-          - "padded":            keys merged via NaN-padded axis-0 concat
-          - "weighted_avg":      keys merged via weighted mean across tasks
-          - "skipped_task_local":   non-per-trial, varying shapes across tasks
-          - "skipped_ndim_mismatch": inconsistent ndim across tasks
+          - "concatenated":         keys merged via straight axis-0 concat
+          - "padded":               keys merged via NaN-padded axis-0 concat
+          - "weighted_avg":         per-task aggregates (same shape), weighted-mean
+          - "padded_weighted_avg":  1D per-task aggregates (varying length),
+                                    NaN-padded then NaN-aware weighted-mean
+          - "skipped_ndim_mismatch":  inconsistent ndim across tasks
+          - "skipped_nontrial_2d_varying": 2D+ non-per-trial with varying shape
+                                            (rare; would need ad-hoc handling)
 
     Merge strategy (four-way dispatch per key)
     ------------------------------------------
@@ -193,26 +200,26 @@ def _merge_npz_files(
             secondary axes to ``max(secondary_dim)`` across tasks, then
             concatenate axis 0.  This handles the
             ``scnr_per_trial_per_pair`` case where ``n_pairs`` varies
-            across tasks (different random topologies → different valid
-            bistatic-link counts).  Integer/float arrays are promoted
-            to float so NaN-fill is valid; booleans pad with False.
+            across tasks.  Integer arrays are promoted to float for
+            NaN-fill; booleans pad with False.
 
-    2.  **Non-per-trial axis** (leading dim != n_trials_total — i.e. a
-        per-task aggregate like ``ergodic_sinr_per_user``,
-        ``p_cds_mean``, ``ergodic_scnr_per_pair``).
-          - If all tasks have identical shape → **weighted mean across
-            tasks** with weights = ``n_trials_total`` per task.  This
-            gives the same ergodic statistic as if the trials had all
-            been pooled.  Example: ``ergodic_sinr_per_user`` has shape
-            ``(n_users,)`` because ``n_users`` is config-fixed → every
-            task has the same shape → cross-task weighted mean is the
-            right aggregate.
-          - If shapes vary across tasks → SKIP (task-local axis).
-            Example: ``ergodic_scnr_per_pair`` where ``n_pairs`` is
-            scheduling-dependent.  The "pair index" semantics differ
-            per task — pair 3 in task 0 is a different physical link
-            than pair 3 in task 1.  Inspect per-task .npz files for
-            this detail.
+    2.  **Non-per-trial, identical shape across tasks** (e.g.
+        ``ergodic_sinr_per_user``, ``p_cds_mean``, ``ergodic_rate_per_user``):
+        per-task aggregate where ``n_users`` etc. is config-fixed.
+        Aggregate via cross-task **weighted mean** with weights =
+        ``n_trials_total`` per task.
+
+    3.  **Non-per-trial, varying 1D length across tasks** (e.g.
+        ``ergodic_scnr_per_pair`` where ``n_pairs`` depends on per-task
+        topology and scheduling): NaN-pad each task's array to
+        ``max_len`` across tasks, then NaN-aware weighted-mean.  The
+        result has length ``max_len``, matching the secondary axis of
+        the corresponding per-trial-per-pair array, so SCNRStatistics
+        reconstruction sees consistent shapes.  See companion sidecar
+        merge which pads ``scnr_pair_keys`` correspondingly.
+
+    4.  **Non-per-trial, varying 2D+ shape**: too ambiguous to reconcile
+        generically.  Warn and drop (none in current SimResult schema).
     """
     if not npz_paths:
         return {}, {}
@@ -333,7 +340,7 @@ def _merge_npz_files(
             continue
 
         # ── Branch 3: per-task aggregate (NOT per-trial) ──
-        # Decide between weighted-mean (same shape) and skip (varying).
+        # Three sub-cases based on shape consistency across tasks.
         shapes = {arr.shape for arr, _ in pairs}
         if len(shapes) == 1:
             # Same shape across all tasks → cross-task weighted mean.
@@ -342,7 +349,7 @@ def _merge_npz_files(
                 [n_t for _, n_t in pairs],
             )
             if result is None:
-                _bump("skipped_task_local")
+                _bump("skipped_zero_weight")
                 continue
             merged[key] = result
             _bump("weighted_avg")
@@ -352,15 +359,50 @@ def _merge_npz_files(
                 "(weights = n_trials per task).",
                 key, next(iter(shapes)), len(pairs),
             )
-        else:
-            # Shapes differ across tasks → task-local axis, skip.
+        elif ndim == 1:
+            # 1D, varying length across tasks (e.g. ergodic_scnr_per_pair
+            # where n_pairs depends on per-task topology/scheduling).
+            # Pad each task's array to max length with NaN, then NaN-
+            # aware weighted-mean across tasks.  This yields a (max_len,)
+            # array that's consistent with the secondary-axis padding of
+            # the matching per-trial-per-pair array — and crucially keeps
+            # the key present so SimResult.load() doesn't KeyError.
+            max_len = max(arr.shape[0] for arr, _ in pairs)
+            padded_parts: List[Tuple[np.ndarray, int]] = []
+            for arr, n_t in pairs:
+                if not np.issubdtype(arr.dtype, np.floating):
+                    arr = arr.astype(float)
+                pad_amount = max_len - arr.shape[0]
+                if pad_amount > 0:
+                    arr = np.pad(arr, (0, pad_amount), mode="constant",
+                                 constant_values=np.nan)
+                padded_parts.append((arr, n_t))
+            result = _weighted_mean_across_tasks(
+                [arr for arr, _ in padded_parts],
+                [n_t for _, n_t in padded_parts],
+            )
+            if result is None:
+                _bump("skipped_zero_weight")
+                continue
+            merged[key] = result
+            _bump("padded_weighted_avg")
             logger.info(
-                "key %r: shapes vary across tasks %s; SKIPPED from merged "
-                "output (task-local axis like per-pair).  Inspect "
-                "individual per-task .npz files for per-pair detail.",
+                "key %r: 1D per-task aggregate, shapes vary %s; "
+                "NaN-padded to length %d then NaN-aware weighted-mean "
+                "across tasks.  Resulting length matches the secondary "
+                "axis of the matching per-trial-per-pair array.",
+                key, sorted(shapes), max_len,
+            )
+        else:
+            # 2D+ non-per-trial varying shape — too ambiguous to reconcile.
+            # Drop with a warning (rare in practice).
+            logger.warning(
+                "key %r: 2D+ non-per-trial shapes vary across tasks %s; "
+                "SKIPPED.  This may break downstream SimResult.load(); "
+                "report if you see this.",
                 key, sorted(shapes),
             )
-            _bump("skipped_task_local")
+            _bump("skipped_nontrial_2d_varying")
 
     return merged, counts
 
@@ -468,6 +510,30 @@ def _merge_json_sidecars_from_loaded(
             "runtime_mean_s":   runtime_mean,
             "runtime_total_s":  runtime_total,
         })
+
+        # Reconcile scnr_pair_keys length with the merged ergodic_scnr_per_pair.
+        # After the npz merge, ergodic_scnr_per_pair has shape (max_pairs,)
+        # where max_pairs = max(n_pairs) across tasks.  scnr_pair_keys from
+        # first task may be shorter — pad with placeholder (-1, -1) tuples
+        # so SimResult.load() sees consistent lengths.  Placeholder rows
+        # signal "this slot is task-local and doesn't correspond to a single
+        # physical bistatic link" — downstream code can filter them out.
+        if (merged_algo.get("scnr_present")
+                and merged_algo.get("scnr_pair_keys") is not None):
+            erg_key = f"{algo}/scnr_stats/ergodic_scnr_per_pair"
+            if erg_key in merged_arrays:
+                target_len = int(np.asarray(merged_arrays[erg_key]).shape[0])
+                existing = list(merged_algo["scnr_pair_keys"])
+                if len(existing) < target_len:
+                    # Pad with [-1, -1] placeholder pairs.
+                    pad_n = target_len - len(existing)
+                    merged_algo["scnr_pair_keys"] = (
+                        existing + [[-1, -1]] * pad_n
+                    )
+                elif len(existing) > target_len:
+                    # Shouldn't happen in practice, but guard.
+                    merged_algo["scnr_pair_keys"] = existing[:target_len]
+
         per_algo_merged[algo] = merged_algo
 
     base["per_algorithm_scalars"] = per_algo_merged
@@ -824,25 +890,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         actions = summary["skipped"]
         merged_n = (actions.get("concatenated", 0)
                     + actions.get("padded", 0)
-                    + actions.get("weighted_avg", 0))
-        skipped_n = (actions.get("skipped_task_local", 0)
-                     + actions.get("skipped_ndim_mismatch", 0))
+                    + actions.get("weighted_avg", 0)
+                    + actions.get("padded_weighted_avg", 0))
+        skipped_n = (actions.get("skipped_ndim_mismatch", 0)
+                     + actions.get("skipped_nontrial_2d_varying", 0)
+                     + actions.get("skipped_zero_weight", 0))
         logger.info("  keys merged:        %d  "
-                    "(concat=%d, padded=%d, weighted_avg=%d)",
+                    "(concat=%d, padded=%d, weighted_avg=%d, "
+                    "padded_weighted_avg=%d)",
                     merged_n,
                     actions.get("concatenated", 0),
                     actions.get("padded", 0),
-                    actions.get("weighted_avg", 0))
+                    actions.get("weighted_avg", 0),
+                    actions.get("padded_weighted_avg", 0))
         if skipped_n:
-            logger.info("  keys skipped:       %d  "
-                        "(task_local=%d, ndim_mismatch=%d)",
-                        skipped_n,
-                        actions.get("skipped_task_local", 0),
-                        actions.get("skipped_ndim_mismatch", 0))
-            logger.info(
-                "    (skipped keys have task-local axis like per-pair "
-                "with varying length; inspect individual per-task .npz "
-                "files for that detail)"
+            logger.warning(
+                "  keys skipped:       %d  "
+                "(ndim_mismatch=%d, 2d_varying=%d, zero_weight=%d)",
+                skipped_n,
+                actions.get("skipped_ndim_mismatch", 0),
+                actions.get("skipped_nontrial_2d_varying", 0),
+                actions.get("skipped_zero_weight", 0),
+            )
+            logger.warning(
+                "    (skipped keys may cause SimResult.load() KeyError; "
+                "inspect individual per-task .npz files or report.)"
             )
     return 0
 
