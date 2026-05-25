@@ -164,78 +164,175 @@ def _validate_manifests(manifests: List[Tuple[Path, Dict[str, Any]]]) -> str:
     return first_kind
 
 
-def _merge_npz_files(npz_paths: List[Path]) -> Dict[str, np.ndarray]:
-    """Concatenate same-keyed arrays from a list of .npz files along
-    axis 0 (the trial dimension).
+def _merge_npz_files(
+    npz_paths:           List[Path],
+    per_task_n_trials:   List[int],
+) -> Tuple[Dict[str, np.ndarray], Dict[str, int]]:
+    """Concatenate same-keyed arrays from per-task .npz files into a
+    single merged dict, handling shape variations correctly.
 
-    Returns a dict of merged arrays suitable for ``np.savez_compressed``.
+    Returns
+    -------
+    merged : dict[str, np.ndarray]
+        Merged arrays suitable for ``np.savez_compressed``.
+    skipped_by_reason : dict[str, int]
+        Counts of keys skipped, grouped by reason string (for summary
+        logging).  Keys are reasons like "task_local_axis", "ndim_mismatch".
 
-    Behaviour:
-      - Keys present in any task are emitted.
-      - Empty/scalar arrays are skipped during concatenation.
-      - On shape mismatch on non-leading axes (rare; would indicate
-        a config drift across tasks), keeps the first task's value
-        and logs a warning.
+    Merge strategy
+    --------------
+    For each key, the leading-axis semantics determine the merge:
+
+    1.  **Per-trial axis** (leading dim == that task's ``n_trials_total``):
+        - 1D arrays:       concatenate along axis 0.
+        - 2D+ arrays with consistent secondary axes: concatenate axis 0.
+        - 2D+ arrays with mismatched secondary axes: NaN-pad the
+          secondary axes to ``max(secondary_dim)`` across tasks, then
+          concatenate axis 0.  This handles the
+          ``scnr_per_trial_per_pair`` case where ``n_pairs`` varies
+          across tasks (different random topologies → different valid
+          bistatic-link counts).  Integer/float arrays are promoted to
+          float so NaN-fill is valid; booleans pad with False.
+
+    2.  **Task-local axis** (leading dim != n_trials_total): these are
+        arrays like ``ergodic_scnr_per_pair`` whose "pair index" has
+        task-local semantics — pair 3 in task 0 is a totally different
+        physical link than pair 3 in task 1.  Concatenating would be
+        semantically wrong, so we SKIP these keys entirely with a clear
+        log message.  Downstream code that needs per-pair detail should
+        load individual per-task files, not the aggregated result.
     """
     if not npz_paths:
-        return {}
+        return {}, {}
+    if len(npz_paths) != len(per_task_n_trials):
+        raise ValueError(
+            f"npz_paths ({len(npz_paths)}) and per_task_n_trials "
+            f"({len(per_task_n_trials)}) must have same length"
+        )
 
-    # Load all npz files into memory dicts (close immediately to release
-    # file handles — NpzFile is lazy and keeps the file open).
+    # Load all npz files into memory dicts (release file handles
+    # immediately — NpzFile is lazy and keeps the file open).
     per_task_dicts: List[Dict[str, np.ndarray]] = []
     for p in npz_paths:
         with np.load(p) as nz:
             per_task_dicts.append({k: nz[k].copy() for k in nz.files})
 
-    # Union of keys across all tasks (in practice they should match).
+    # Union of keys across tasks (in practice they should match).
     all_keys: set = set()
     for d in per_task_dicts:
         all_keys.update(d.keys())
 
     merged: Dict[str, np.ndarray] = {}
+    skipped: Dict[str, int] = {}
+
     for key in sorted(all_keys):
-        parts: List[np.ndarray] = []
-        for d in per_task_dicts:
+        # Pair each task's array with that task's n_trials.
+        pairs: List[Tuple[np.ndarray, int]] = []
+        for d, n_t in zip(per_task_dicts, per_task_n_trials):
             if key not in d:
                 continue
             arr = d[key]
-            # Skip empty arrays — they don't contribute to the merge
-            # and can cause concatenation issues.
-            if arr.size == 0:
+            if arr.size == 0 or arr.ndim == 0:
                 continue
-            parts.append(arr)
-        if not parts:
-            # Every task had an empty array for this key — emit empty.
+            pairs.append((arr, n_t))
+
+        if not pairs:
+            # Every task had empty array — emit empty placeholder.
             merged[key] = np.array([])
             continue
-        try:
-            merged[key] = np.concatenate(parts, axis=0)
-        except ValueError as e:
-            logger.warning(
-                "key %r: concatenation failed (%s); keeping first task's value",
-                key, e,
+
+        # Decide: is leading axis the trial axis?  True iff for every
+        # task, arr.shape[0] == that task's n_trials_total.
+        is_per_trial = all(arr.shape[0] == n_t for arr, n_t in pairs)
+
+        if not is_per_trial:
+            # Task-local leading axis (e.g. per-pair, per-AP-pair).
+            # Cross-task concatenation is semantically wrong here.
+            logger.info(
+                "key %r: leading dim != n_trials_total (task-local axis "
+                "like per-pair); SKIPPED from merged output. "
+                "Inspect per-task .npz files for per-pair detail.",
+                key,
             )
-            merged[key] = parts[0]
-    return merged
+            skipped["task_local_axis"] = skipped.get("task_local_axis", 0) + 1
+            continue
+
+        parts = [arr for arr, _ in pairs]
+
+        # ndim must be consistent across tasks (otherwise we can't reconcile).
+        ndims = {p.ndim for p in parts}
+        if len(ndims) > 1:
+            logger.warning(
+                "key %r: inconsistent ndim across tasks %s; SKIPPED",
+                key, sorted(ndims),
+            )
+            skipped["ndim_mismatch"] = skipped.get("ndim_mismatch", 0) + 1
+            continue
+
+        # 1D — straight concatenation; no padding needed.
+        if parts[0].ndim == 1:
+            merged[key] = np.concatenate(parts, axis=0)
+            continue
+
+        # 2D+ — pad secondary axes to max, then concatenate.
+        ndim = parts[0].ndim
+        max_secondary = [
+            max(p.shape[ax] for p in parts) for ax in range(1, ndim)
+        ]
+        needs_padding = any(
+            p.shape[ax + 1] != max_secondary[ax]
+            for p in parts for ax in range(ndim - 1)
+        )
+
+        padded: List[np.ndarray] = []
+        for p in parts:
+            pad_widths = [(0, 0)]  # axis 0 (trial axis): no padding
+            for ax_i, max_sz in enumerate(max_secondary, start=1):
+                pad_widths.append((0, max_sz - p.shape[ax_i]))
+            # Choose fill value by dtype:
+            #   - float        → NaN (downstream uses np.nanmean etc.)
+            #   - int          → promote to float, then NaN
+            #   - bool / other → leave as-is, pad with False/0
+            if np.issubdtype(p.dtype, np.floating):
+                fill = np.nan
+            elif np.issubdtype(p.dtype, np.integer):
+                p    = p.astype(float)
+                fill = np.nan
+            elif np.issubdtype(p.dtype, np.bool_):
+                fill = False
+            else:
+                fill = 0
+            padded.append(np.pad(p, pad_widths, mode="constant",
+                                 constant_values=fill))
+        merged[key] = np.concatenate(padded, axis=0)
+
+        if needs_padding:
+            logger.info(
+                "key %r: secondary axis varies across tasks "
+                "(max=%s); NaN-padded then concatenated along trial axis. "
+                "Use np.nanmean / np.nanpercentile downstream.",
+                key, max_secondary,
+            )
+
+    return merged, skipped
 
 
-def _merge_json_sidecars(
-    json_paths:     List[Path],
+def _merge_json_sidecars_from_loaded(
+    sidecars:       List[Dict[str, Any]],
     merged_arrays:  Dict[str, np.ndarray],
 ) -> Dict[str, Any]:
     """Merge result.json sidecars: keep first task's metadata, recompute
     per-algorithm scalars from the merged arrays.
 
+    ``sidecars`` is a list of pre-loaded sidecar dicts (one per task).
     ``merged_arrays`` is the dict returned by :func:`_merge_npz_files`,
     used to recompute means/totals from the concatenated trial data.
+    Uses ``np.nanmean`` / ``np.nansum`` so NaN-padded entries from
+    per-trial × per-pair arrays (variable secondary axis) don't poison
+    the aggregate statistics.
     """
-    if not json_paths:
+    if not sidecars:
         return {}
-    sidecars: List[Dict[str, Any]] = []
-    for p in json_paths:
-        with open(p, "r") as f:
-            sidecars.append(json.load(f))
-
     # Start from first task as the base — cfg, runner_cfg, algorithm_specs
     # should be identical across tasks (verified by _validate_manifests).
     base = dict(sidecars[0])
@@ -293,19 +390,39 @@ def _merge_json_sidecars(
     return base
 
 
+def _per_task_n_trials_from_sidecar(sidecar: Dict[str, Any]) -> int:
+    """Pull n_trials_total from a result.json sidecar.
+
+    All algorithms within a task share the same trial set, so any
+    algorithm's n_trials_total is the per-task count.  We take the max
+    defensively in case one algo recorded fewer (e.g. early exit).
+    """
+    per_algo = sidecar.get("per_algorithm_scalars", {})
+    if not per_algo:
+        return 0
+    return max(
+        (int(p.get("n_trials_total", 0)) for p in per_algo.values()),
+        default=0,
+    )
+
+
 def _merge_one_unit(
     task_dirs:    List[Path],
     npz_filename: str,
     out_npz:      Path,
     out_json:     Path,
-) -> int:
+) -> Tuple[int, Dict[str, int]]:
     """Merge a single (npz + sidecar json) pair across all task dirs.
 
     For 'single'-kind: npz_filename = "result.npz" (per task dir).
     For 'sweep'-kind:  npz_filename = "result_<axis>_<v>.npz" (per value).
 
-    Returns the merged n_trials_total (sum of one algorithm — they
-    should all be equal, but the first encountered key wins).
+    Returns
+    -------
+    n_trials : int
+        Merged n_trials_total (any algorithm — should all match).
+    skipped : dict[str, int]
+        Per-reason counts of keys not merged (from _merge_npz_files).
     """
     json_filename = npz_filename.replace(".npz", ".json")
     npz_paths  = [d / npz_filename for d in task_dirs]
@@ -326,13 +443,21 @@ def _merge_one_unit(
 
     if not valid_indices:
         logger.error("no tasks have %s — cannot merge", npz_filename)
-        return 0
+        return 0, {}
 
     valid_npz_paths  = [npz_paths[i]  for i in valid_indices]
     valid_json_paths = [json_paths[i] for i in valid_indices]
 
-    merged_arrays  = _merge_npz_files(valid_npz_paths)
-    merged_sidecar = _merge_json_sidecars(valid_json_paths, merged_arrays)
+    # Load sidecars once; extract per-task n_trials for shape-aware merge.
+    sidecars: List[Dict[str, Any]] = []
+    for jp in valid_json_paths:
+        with open(jp, "r") as f:
+            sidecars.append(json.load(f))
+    per_task_n_trials = [_per_task_n_trials_from_sidecar(sc) for sc in sidecars]
+
+    merged_arrays, skipped = _merge_npz_files(valid_npz_paths,
+                                              per_task_n_trials)
+    merged_sidecar = _merge_json_sidecars_from_loaded(sidecars, merged_arrays)
 
     # Save.
     out_npz.parent.mkdir(parents=True, exist_ok=True)
@@ -345,7 +470,7 @@ def _merge_one_unit(
     for algo, scalars in merged_sidecar.get("per_algorithm_scalars", {}).items():
         n_trials = int(scalars.get("n_trials_total", 0))
         break  # all algorithms have same n_trials
-    return n_trials
+    return n_trials, skipped
 
 
 def _json_default(obj: Any) -> Any:
@@ -417,15 +542,18 @@ def merge_experiment_results(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     summary: Dict[str, Any] = {"kind": kind, "n_tasks": len(valid_task_dirs)}
+    skipped_total: Dict[str, int] = {}
 
     if kind == "single":
-        n_trials = _merge_one_unit(
+        n_trials, skipped = _merge_one_unit(
             task_dirs    = valid_task_dirs,
             npz_filename = "result.npz",
             out_npz      = out_dir / "result.npz",
             out_json     = out_dir / "result.json",
         )
         summary["n_trials"] = n_trials
+        for k, v in skipped.items():
+            skipped_total[k] = skipped_total.get(k, 0) + v
 
     elif kind == "sweep":
         axis_info = first_manifest.get("axis")
@@ -448,13 +576,15 @@ def merge_experiment_results(
             out_npz_v   = out_dir / npz_filename
             out_json_v  = out_dir / npz_filename.replace(".npz", ".json")
             logger.info("merging sweep value %s=%s ...", axis_name, v)
-            n_trials_v = _merge_one_unit(
+            n_trials_v, skipped_v = _merge_one_unit(
                 task_dirs    = valid_task_dirs,
                 npz_filename = npz_filename,
                 out_npz      = out_npz_v,
                 out_json     = out_json_v,
             )
             per_value_n_trials.append(n_trials_v)
+            for k, c in skipped_v.items():
+                skipped_total[k] = skipped_total.get(k, 0) + c
         summary["axis_name"]   = axis_name
         summary["n_values"]    = len(axis_values)
         summary["n_trials"]    = per_value_n_trials[0] if per_value_n_trials else 0
@@ -475,6 +605,8 @@ def merge_experiment_results(
     with open(out_dir / "manifest.json", "w") as f:
         json.dump(merged_manifest, f, indent=2, default=_json_default)
 
+    if skipped_total:
+        summary["skipped"] = skipped_total
     return summary
 
 
@@ -603,6 +735,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         logger.info("  sweep axis:         %s", summary.get("axis_name"))
         logger.info("  sweep values:       %d", summary.get("n_values", 0))
         logger.info("  trials per value:   %d", summary.get("n_trials", 0))
+    if summary.get("skipped"):
+        logger.info("  skipped keys:       %s", summary["skipped"])
+        logger.info(
+            "    (these have task-local axis semantics like per-pair; "
+            "inspect individual per-task .npz files for that detail)"
+        )
     return 0
 
 
