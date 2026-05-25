@@ -32,6 +32,7 @@ N_TRIALS="${N_TRIALS:-}"
 N_WORKERS="${N_WORKERS:--1}"          # -1 = all cores; 1 = sequential
 SEED="${SEED:-42}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-results}"
+RUN_ID="${RUN_ID:-}"                  # custom run-id; empty → auto-timestamp
 # Algorithm selection — leave empty to use the per-experiment default
 # (sinr_cdf/scnr_cdf → all_algorithms; gamma/kappa/clutter sweeps →
 # cordis_vs_centralized; antennas_sweep → cordis_vs_benchmarks).  Set
@@ -55,11 +56,18 @@ TRIAL_ARGS=()
 SPEC_ARGS=()
 [ -n "$SPECS" ] && SPEC_ARGS+=(--specs "$SPECS")
 
+# Conditionally include --run-id.  Empty means "use auto-timestamp".
+# SLURM array jobs set this so each task gets a unique, predictable
+# leaf dir (e.g. array_12345_task_0) instead of racing timestamps.
+RUN_ID_ARGS=()
+[ -n "$RUN_ID" ] && RUN_ID_ARGS+=(--run-id "$RUN_ID")
+
 python3 scripts/exp_n_ue_sweep.py \
     --base-config   "$BASE_CONFIG"   \
     $EXP_CONFIG_FLAG                 \
     "${TRIAL_ARGS[@]}"             \
     "${SPEC_ARGS[@]}"              \
+    "${RUN_ID_ARGS[@]}"            \
     --n-workers     "$N_WORKERS"     \
     --seed          "$SEED"          \
     --output-root   "$OUTPUT_ROOT"   \

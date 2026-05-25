@@ -93,6 +93,13 @@ def build_base_parser(experiment_name: str) -> argparse.ArgumentParser:
     p.add_argument("--output-root", default="results",
                    help="Root directory under which exp_<name>/<ts>/ "
                         "subdirectories are created.")
+    p.add_argument("--run-id", default=None,
+                   help="Custom run identifier replacing the auto-"
+                        "generated timestamp.  Used by SLURM array jobs "
+                        "to give each task a unique, predictable output "
+                        "subdir (e.g. 'array_12345_task_0').  When "
+                        "omitted, falls back to the YYYYMMDD_HHMMSS "
+                        "timestamp.")
     p.add_argument("--verbose", "-v", action="count", default=0,
                    help="Increase log verbosity (use -vv for DEBUG).")
     p.add_argument("--no-progress", action="store_true",
@@ -396,8 +403,11 @@ def run_experiment(experiment_name: str,
         raise KeyError(f"unknown experiment {experiment_name!r}; "
                        f"registered: {sorted(cordis['REGISTRY'])}")
 
-    # Output directory under output-root, with timestamped sub-dir.
+    # Output directory under output-root.  When --run-id is provided
+    # (e.g. by a SLURM array task), use it as the leaf subdir name;
+    # otherwise experiment_dir() generates a YYYYMMDD_HHMMSS timestamp.
     exp_dir = cordis["experiment_dir"](experiment_name,
+                                       timestamp=args.run_id,
                                        root=args.output_root)
     log_path = cordis["log_dir"](exp_dir) / "run.log"
     setup_logging(log_path, verbosity=args.verbose,

@@ -91,6 +91,9 @@ EXAMPLES
     # Preview before pulling sinr_cdf only:
     bash $0 --dry-run exp_sinr_cdf
 
+    # Pull only one array's tasks + aggregated result (Stage 21):
+    bash $0 --array-id 12345 exp_sinr_cdf
+
     # Pull as another user (collaborator on the same cluster):
     HPC3_REPO=/pub/alice/CORDIS bash $0 exp_sinr_cdf
 
@@ -99,6 +102,11 @@ EXAMPLES
     bash $0 --delete                # only if dry-run looked right
 EOF
 }
+
+# Stage 21: optional filter on array job ID.  When set, the sync
+# pulls only the matching per-task + aggregated subdirs under the
+# given experiment (requires EXPERIMENT to also be set).
+ARRAY_ID=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -116,6 +124,20 @@ while [[ $# -gt 0 ]]; do
             ;;
         -q|--quiet)
             QUIET=1
+            shift
+            ;;
+        --array-id)
+            if [[ $# -lt 2 ]]; then
+                echo "ERROR: --array-id requires a value" >&2; exit 2
+            fi
+            ARRAY_ID="$2"
+            # Strip optional 'array_' prefix for user convenience.
+            ARRAY_ID="${ARRAY_ID#array_}"
+            shift 2
+            ;;
+        --array-id=*)
+            ARRAY_ID="${1#--array-id=}"
+            ARRAY_ID="${ARRAY_ID#array_}"
             shift
             ;;
         --)
@@ -145,6 +167,15 @@ done
 # (rather than "the directory src itself").  We always want the contents
 # to land inside the matching local dir.
 
+# --array-id requires --experiment scoping (otherwise we'd have to glob
+# across every exp_*/ tree and rsync doesn't natively support that with
+# remote sources).
+if [[ -n "$ARRAY_ID" && -z "$EXPERIMENT" ]]; then
+    echo "ERROR: --array-id requires an EXPERIMENT argument (e.g. 'exp_sinr_cdf')." \
+         "Without the experiment, there's no scope to filter." >&2
+    exit 2
+fi
+
 if [[ -n "$EXPERIMENT" ]]; then
     # Single-experiment mode.  Light sanity check — most real
     # experiments start with 'exp_' but don't be too strict.
@@ -166,12 +197,28 @@ RSYNC_FLAGS=(-avzh)              # archive + verbose + compress + human-readable
 [[ $DRY_RUN -eq 1 ]] && RSYNC_FLAGS+=(--dry-run)
 [[ $DELETE  -eq 1 ]] && RSYNC_FLAGS+=(--delete)
 
+# Stage 21: when --array-id is set, restrict rsync to subdirs whose
+# names start with array_<id>_ (matches both task_* and _aggregated).
+# Anything else under the experiment dir is excluded.  Note: rsync
+# applies --include/--exclude rules in order, and the final --exclude='*'
+# blocks everything not explicitly included.
+if [[ -n "$ARRAY_ID" ]]; then
+    RSYNC_FLAGS+=(
+        --include="/array_${ARRAY_ID}_task_*/"
+        --include="/array_${ARRAY_ID}_task_*/**"
+        --include="/array_${ARRAY_ID}_aggregated/"
+        --include="/array_${ARRAY_ID}_aggregated/**"
+        --exclude='/*'
+    )
+fi
+
 # ─── Pre-flight ──────────────────────────────────────────────────────────────
 mkdir -p "$LOCAL"
 
 echo "─────────────────────────────────────────────────────────────────"
 echo " Source:      $REMOTE"
 echo " Destination: $LOCAL"
+[[ -n "$ARRAY_ID" ]] && echo " Array filter: array_${ARRAY_ID}_* only"
 echo " Flags:       ${RSYNC_FLAGS[*]}"
 if [[ $DRY_RUN -eq 1 ]]; then
     echo " Mode:        DRY-RUN (no files transferred)"

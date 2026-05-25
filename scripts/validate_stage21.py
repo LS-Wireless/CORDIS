@@ -212,7 +212,7 @@ def test_06_array_common_trial_split():
 # ═════════════════════════════════════════════════════════════════════════════
 
 @_register("Test  7: scripts/aggregate_array_batch.py exists and exposes "
-           "find_per_task_pickles + merge_per_task_simresults")
+           "find_per_task_dirs + merge_experiment_results")
 def test_07_aggregator_signature():
     agg_path = REPO_ROOT / "scripts" / "aggregate_array_batch.py"
     assert agg_path.exists(), f"missing aggregator: {agg_path}"
@@ -225,19 +225,18 @@ def test_07_aggregator_signature():
         raise _SkipTest(f"could not import {agg_path}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    assert hasattr(mod, "find_per_task_pickles"), (
-        "aggregator must expose find_per_task_pickles(array_dir) -> [Path]"
+    assert hasattr(mod, "find_per_task_dirs"), (
+        "aggregator must expose find_per_task_dirs(exp_dir, array_id) -> [Path]"
     )
-    assert hasattr(mod, "merge_per_task_simresults"), (
-        "aggregator must expose merge_per_task_simresults(sim_results)"
+    assert hasattr(mod, "merge_experiment_results"), (
+        "aggregator must expose merge_experiment_results(per_task_er)"
     )
-    # CLI is invokable
-    sig = inspect.signature(mod.find_per_task_pickles)
+    sig = inspect.signature(mod.find_per_task_dirs)
     params = list(sig.parameters.keys())
-    assert "array_dir" in params, (
-        f"find_per_task_pickles should take an array_dir parameter; "
-        f"got {params}"
-    )
+    for required in ("exp_dir", "array_id"):
+        assert required in params, (
+            f"find_per_task_dirs should take {required!r}; got {params}"
+        )
 
 
 @_register("Test  8: aggregator CLI --help runs without error")
@@ -250,42 +249,47 @@ def test_08_aggregator_help():
     assert result.returncode == 0, (
         f"aggregator --help failed: stderr={result.stderr[:500]}"
     )
-    assert "array_dir" in result.stdout, (
-        f"aggregator --help should mention array_dir positional; "
+    # Stage 21 v2: two positional args (exp_name + array_id)
+    assert "exp_name" in result.stdout and "array_id" in result.stdout, (
+        f"aggregator --help should mention exp_name + array_id positionals; "
         f"got: {result.stdout[:500]}"
     )
 
 
-@_register("Test  9: aggregator gracefully handles missing array_dir "
-           "(returns non-zero exit, doesn't crash)")
+@_register("Test  9: aggregator gracefully handles non-existent "
+           "results-root (returns non-zero exit, doesn't crash)")
 def test_09_aggregator_missing_dir():
     agg_path = REPO_ROOT / "scripts" / "aggregate_array_batch.py"
     result = subprocess.run(
-        [sys.executable, str(agg_path), "/nonexistent/path/xyz"],
+        [sys.executable, str(agg_path),
+         "sinr_cdf", "99999",
+         "--results-root", "/nonexistent/path/xyz"],
         capture_output=True, text=True, timeout=30,
     )
     assert result.returncode != 0, (
-        "aggregator should fail (non-zero exit) on missing dir; got 0"
+        "aggregator should fail (non-zero exit) on missing results-root; "
+        "got 0"
     )
 
 
-@_register("Test 10: aggregator --dry-run discovers fake task pickles "
-           "under array_<id>/task_*/exp_*/<ts>/result.pkl layout")
+@_register("Test 10: aggregator --dry-run discovers per-task dirs under "
+           "the new results/exp_<name>/array_<id>_task_*/ layout")
 def test_10_aggregator_dryrun_discovery():
-    """Create a fake layout matching the array workflow, point the
-    aggregator at it with --dry-run, expect zero exit + per-task
-    pickle paths in output."""
+    """Create a fake layout matching the experiment-first array workflow,
+    invoke the aggregator with --dry-run, expect zero exit + per-task
+    dir names in output."""
     agg_path = REPO_ROOT / "scripts" / "aggregate_array_batch.py"
     with tempfile.TemporaryDirectory() as tmpdir:
-        root = Path(tmpdir) / "array_99999"
+        results_root = Path(tmpdir) / "results"
+        exp_dir = results_root / "exp_sinr_cdf"
         for task_id in range(3):
-            stamp_dir = (root / f"task_{task_id}" / "exp_sinr_cdf"
-                         / "2026-05-22_18-30-00")
-            stamp_dir.mkdir(parents=True)
-            (stamp_dir / "result.pkl").write_bytes(b"")  # empty, just for glob
+            (exp_dir / f"array_99999_task_{task_id}").mkdir(parents=True)
 
         result = subprocess.run(
-            [sys.executable, str(agg_path), str(root), "--dry-run"],
+            [sys.executable, str(agg_path),
+             "sinr_cdf", "99999",
+             "--results-root", str(results_root),
+             "--dry-run"],
             capture_output=True, text=True, timeout=30,
         )
         assert result.returncode == 0, (
@@ -293,11 +297,11 @@ def test_10_aggregator_dryrun_discovery():
             f"stderr={result.stderr[:500]}"
         )
         # Output should mention the 3 task dirs we created.
+        combined = result.stdout + result.stderr
         for task_id in range(3):
-            assert f"task_{task_id}" in (result.stdout + result.stderr), (
-                f"expected task_{task_id} in --dry-run output; "
-                f"got stdout={result.stdout[:300]} "
-                f"stderr={result.stderr[:300]}"
+            assert f"array_99999_task_{task_id}" in combined, (
+                f"expected array_99999_task_{task_id} in --dry-run output; "
+                f"got: {combined[:500]}"
             )
 
 
@@ -330,6 +334,91 @@ def test_11_regenerator_array_set():
             f"ARRAY_ENABLED_EXPERIMENTS should NOT include {name!r} — it "
             f"doesn't benefit from per-trial array parallelism"
         )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Stage 21 v2 — run-id plumbing for experiment-first directory layout
+# ═════════════════════════════════════════════════════════════════════════════
+
+@_register("Test 12: _exp_common.py adds --run-id flag and passes it as "
+           "timestamp to experiment_dir()")
+def test_12_run_id_plumbing():
+    src = (REPO_ROOT / "scripts" / "_exp_common.py").read_text()
+    assert re.search(r'add_argument\(\s*"--run-id"', src), (
+        "_exp_common.py must add --run-id CLI flag (Stage 21 v2): used by "
+        "SLURM array tasks to give each task a predictable leaf-dir name "
+        "in place of the auto-timestamp."
+    )
+    # Must be passed as `timestamp=args.run_id` to experiment_dir
+    assert re.search(
+        r"experiment_dir.*\n.*timestamp\s*=\s*args\.run_id",
+        src, re.S,
+    ), (
+        "experiment_dir() must be called with timestamp=args.run_id so "
+        "the runner honours the custom run-id when set"
+    )
+
+
+@_register("Test 13: _array_common.sh exports RUN_ID = "
+           "array_<jobid>_task_<id> and OUTPUT_ROOT (not nested under array_<id>)")
+def test_13_array_common_new_layout():
+    common = (REPO_ROOT / "scripts" / "slurm" / "uci-hpc3" / "array"
+              / "_array_common.sh")
+    text = common.read_text()
+    # RUN_ID composition
+    assert re.search(
+        r'export RUN_ID="array_\$\{ARRAY_JOB_ID\}_task_\$\{ARRAY_TASK_ID\}"',
+        text,
+    ), (
+        "_array_common.sh must derive RUN_ID as "
+        '"array_${ARRAY_JOB_ID}_task_${ARRAY_TASK_ID}" (Stage 21 v2 - '
+        "experiment-first layout)"
+    )
+    # OUTPUT_ROOT defaults to 'results' (no array_<id> nesting)
+    assert "export OUTPUT_ROOT=" in text
+    # Should NOT include the old 'results/array_${ARRAY_JOB_ID}/task_' pattern
+    assert "results/array_${ARRAY_JOB_ID}/task_" not in text, (
+        "_array_common.sh must NOT use the old "
+        "'results/array_<jobid>/task_<id>' nesting — Stage 21 v2 puts "
+        "the experiment dir first.  Use RUN_ID + default OUTPUT_ROOT='results' "
+        "and let the runner create exp_<name>/<run_id>/ automatically."
+    )
+
+
+@_register("Test 14: every exp_*.sh wrapper plumbs RUN_ID env var "
+           "through to the --run-id CLI flag")
+def test_14_exp_sh_run_id_plumbing():
+    """Spot-check 3 representative wrappers (CDF + sweep + scnr) for
+    the RUN_ID → --run-id pattern."""
+    representative = ["exp_sinr_cdf.sh", "exp_gamma_sweep.sh",
+                      "exp_scnr_cdf.sh"]
+    for fname in representative:
+        path = REPO_ROOT / "scripts" / fname
+        assert path.exists(), f"missing wrapper: {path}"
+        text = path.read_text()
+        assert re.search(r'RUN_ID="\$\{RUN_ID:-\}"', text), (
+            f"{fname} must read RUN_ID env var (Stage 21 v2)"
+        )
+        assert "--run-id" in text, (
+            f"{fname} must pass --run-id flag to scripts/exp_*.py"
+        )
+
+
+@_register("Test 15: sync_results_from_hpc3.sh accepts --array-id "
+           "filter for syncing one array's tasks + aggregated result")
+def test_15_sync_array_id_flag():
+    sync = (REPO_ROOT / "scripts" / "sync_results_from_hpc3.sh").read_text()
+    assert "--array-id" in sync, (
+        "sync_results_from_hpc3.sh must accept --array-id flag for "
+        "Stage 21 v2 (lets you pull one array's results without "
+        "the rest of the experiment's history)"
+    )
+    # The flag should require an EXPERIMENT scope (otherwise rsync filtering
+    # gets ugly across multiple exp_*/ trees).
+    assert re.search(r"--array-id requires.*EXPERIMENT", sync), (
+        "sync script must require --array-id be paired with an "
+        "EXPERIMENT positional argument"
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
