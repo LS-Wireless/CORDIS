@@ -19,9 +19,8 @@
 #SBATCH --job-name=cordis-fronthaul_table
 #SBATCH --output=logs/slurm/fronthaul_table-%j.out
 #SBATCH --error=logs/slurm/fronthaul_table-%j.err
-#SBATCH --time=01:00:00
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=16G
+#SBATCH --time=08:00:00
+#SBATCH --cpus-per-task=40
 # Uncomment and customise for your cluster:
 # #SBATCH --partition=standard
 # #SBATCH --account=your-account

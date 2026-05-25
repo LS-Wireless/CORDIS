@@ -19,9 +19,8 @@
 #SBATCH --job-name=cordis-scnr_cdf
 #SBATCH --output=logs/slurm/scnr_cdf-%j.out
 #SBATCH --error=logs/slurm/scnr_cdf-%j.err
-#SBATCH --time=02:00:00
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=16G
+#SBATCH --time=08:00:00
+#SBATCH --cpus-per-task=40
 # Uncomment and customise for your cluster:
 # #SBATCH --partition=standard
 # #SBATCH --account=your-account

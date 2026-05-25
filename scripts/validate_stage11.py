@@ -258,7 +258,10 @@ def test_12_sub_bash_syntax():
 _RES_RE = {
     "time":  re.compile(r"^#SBATCH\s+--time=(\S+)\s*$",          re.M),
     "cpus":  re.compile(r"^#SBATCH\s+--cpus-per-task=(\S+)\s*$", re.M),
-    "mem":   re.compile(r"^#SBATCH\s+--mem=(\S+)\s*$",           re.M),
+    # Stage 21: --mem dropped from all .sub/.sbatch (HPC3 40-CPU
+    # allocation gives ~192 GB proportional default).  No longer in
+    # the drift check — but if it reappears in only one of the pair
+    # the test still catches it because the dict keys must match.
 }
 
 

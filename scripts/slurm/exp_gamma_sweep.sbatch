@@ -19,9 +19,8 @@
 #SBATCH --job-name=cordis-gamma_sweep
 #SBATCH --output=logs/slurm/gamma_sweep-%j.out
 #SBATCH --error=logs/slurm/gamma_sweep-%j.err
-#SBATCH --time=04:00:00
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=16G
+#SBATCH --time=08:00:00
+#SBATCH --cpus-per-task=40
 # Uncomment and customise for your cluster:
 # #SBATCH --partition=standard
 # #SBATCH --account=your-account

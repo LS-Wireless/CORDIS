@@ -20,9 +20,8 @@
 #SBATCH --job-name=cordis-clutter_cnr_sweep
 #SBATCH --output=logs/slurm/clutter_cnr_sweep-%j.out
 #SBATCH --error=logs/slurm/clutter_cnr_sweep-%j.err
-#SBATCH --time=04:00:00
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=16G
+#SBATCH --time=08:00:00
+#SBATCH --cpus-per-task=40
 #SBATCH --partition=standard
 #SBATCH --account=swindle_lab
 #SBATCH --mail-type=END,FAIL

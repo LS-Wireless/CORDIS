@@ -238,8 +238,9 @@ def test_11_sbatch_references_launcher():
 
 @_register("Test 12: every .sbatch has required SBATCH directives")
 def test_12_sbatch_directives():
+    # Stage 21: --mem dropped (HPC3 40-CPU = ~192 GB proportional default)
     required = ["--job-name", "--output", "--error",
-                "--time", "--cpus-per-task", "--mem"]
+                "--time", "--cpus-per-task"]
     for name in EXPERIMENTS:
         p = REPO_ROOT / "scripts" / "slurm" / f"exp_{name}.sbatch"
         txt = _read(p)

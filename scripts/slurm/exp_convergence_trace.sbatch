@@ -19,9 +19,8 @@
 #SBATCH --job-name=cordis-convergence_trace
 #SBATCH --output=logs/slurm/convergence_trace-%j.out
 #SBATCH --error=logs/slurm/convergence_trace-%j.err
-#SBATCH --time=00:30:00
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=8G
+#SBATCH --time=08:00:00
+#SBATCH --cpus-per-task=40
 # Uncomment and customise for your cluster:
 # #SBATCH --partition=standard
 # #SBATCH --account=your-account
