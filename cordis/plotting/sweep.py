@@ -40,6 +40,10 @@ def plot_sweep(
     only: Optional[Sequence[str]] = None,
     log_x: bool = False,
     grid: bool = True,
+    gamma_db: Optional[float] = None,
+    show_feasible_only: bool = False,
+    annotate_infeasibility: bool = True,
+    cond_metric: str = "min_sinr_db",
 ) -> Axes:
     """
     Plot ``mean(metric)`` vs ``x`` for each algorithm across the sweep.
@@ -65,6 +69,37 @@ def plot_sweep(
     log_x : bool
         Log-scale the x-axis.
     grid : bool
+    gamma_db : float, optional
+        Stage 21 v3: if provided, draws a horizontal dashed line at
+        ``y = gamma_db`` (the SINR floor the algorithms target) and
+        enables the infeasibility-tracking features described below.
+        Most useful when ``metric == "min_sinr_db"`` since γ is then on
+        the same scale as the plot; for other metrics the line is still
+        drawn but its interpretation is up to the reader.
+    show_feasible_only : bool, default False
+        Stage 21 v3: if True (and ``gamma_db`` is set), recompute the
+        per-axis-value central tendency + error band using ONLY trials
+        where ``cond_metric >= gamma_db`` (the "feasible" trials).  At
+        axis values where every trial is infeasible the point is
+        skipped, leaving a visible gap in the curve and a warning in
+        the log.  Useful for showing CORDIS-ADMM's behavior on the
+        trials where it actually solved the problem.
+
+        Requires ``gamma_db`` to be set; warns and falls back to the
+        full mean if you set ``show_feasible_only=True`` without it.
+    annotate_infeasibility : bool, default True
+        Stage 21 v3: if True (and ``gamma_db`` is set), append a
+        per-algorithm infeasibility summary to its legend label as
+        ``"  (max inf=X.X%)"``, where X.X is the WORST infeasibility
+        rate observed across all sweep axis values.  The "max" framing
+        surfaces the worst-case constraint-satisfaction rate, which is
+        typically what you want from a sweep — at the operating points
+        where the algorithm struggles most.  Auto-escapes ``%`` to
+        ``\\%`` when ``text.usetex=True``.
+    cond_metric : str, default "min_sinr_db"
+        Stage 21 v3: per-trial metric used to classify a trial as
+        feasible (``cond_metric >= gamma_db``).  Almost always
+        ``"min_sinr_db"``.
 
     Returns
     -------
@@ -78,6 +113,23 @@ def plot_sweep(
     if ax is None:
         _, ax = plt.subplots(figsize=figsize("single"))
 
+    # NumPy needed for the conditional/feasible-only branch.
+    import numpy as _np
+
+    # No-op warning, matching plot_cdf's behavior.
+    if show_feasible_only and gamma_db is None:
+        logger.warning(
+            "plot_sweep: show_feasible_only=True has no effect without "
+            "gamma_db.  Either pass gamma_db=<value> to enable the "
+            "feasibility filter, or set show_feasible_only=False to "
+            "silence this warning."
+        )
+
+    # LaTeX-aware '%' escape — '%' is the LaTeX comment character and
+    # would eat the rest of the legend label.
+    using_latex = bool(plt.rcParams.get("text.usetex", False))
+    pct_token = r"\%" if using_latex else "%"
+
     xs_sorted = sorted(results_by_x.keys())
 
     # Algorithms that appear at least once across the sweep.
@@ -87,11 +139,45 @@ def plot_sweep(
     if only:
         all_names &= set(only)
 
+    def _feasible_stats(ar, x_val):
+        """Compute (mean, p25, p75, std) over feasible trials only.
+
+        Uses the public ``feasible_trials_mask`` + the (semi-public)
+        ``_samples`` accessor — same path that ``cdf_conditional``
+        uses internally.  Returns ``(None, None, None, None)`` when
+        zero feasible trials exist at this axis value, so the caller
+        can skip the point (leaving a gap in the curve).
+        """
+        if not ar.has_metric(cond_metric):
+            return None, None, None, None
+        try:
+            arr  = ar._samples(metric)
+            mask = ar.feasible_trials_mask(gamma_db, metric=cond_metric)
+        except (KeyError, ValueError, AttributeError) as e:
+            logger.warning(
+                "plot_sweep: feasibility filter failed for %s at x=%s: %s",
+                ar.spec.name if hasattr(ar, "spec") else "?", x_val, e,
+            )
+            return None, None, None, None
+        if mask.size != arr.size or not _np.any(mask):
+            return None, None, None, None
+        filt = arr[mask]
+        return (float(_np.mean(filt)),
+                float(_np.percentile(filt, 25)),
+                float(_np.percentile(filt, 75)),
+                float(_np.std(filt)))
+
     for name in sorted(all_names):
         means: list = []
         lo: list = []
         hi: list = []
         xs_used: list = []
+
+        # For the legend annotation: track the worst (max) infeasibility
+        # rate across all axis values where this algorithm has data.
+        worst_inf_rate = 0.0
+        saw_any_cond_metric = False
+
         for x in xs_sorted:
             sr = results_by_x[x]
             if name not in sr.algorithm_results:
@@ -99,27 +185,72 @@ def plot_sweep(
             ar = sr.algorithm_results[name]
             if not ar.has_metric(metric):
                 continue
-            try:
-                m = ar.mean(metric)
-            except (KeyError, ValueError) as e:
-                logger.warning("mean failed for %s at x=%s: %s", name, x, e)
-                continue
+
+            # Track worst-case infeasibility for the legend annotation
+            # (independent of whether we filter by feasibility below).
+            if (gamma_db is not None and annotate_infeasibility
+                    and ar.has_metric(cond_metric)):
+                inf_rate = ar.infeasibility_rate(gamma_db, metric=cond_metric)
+                worst_inf_rate = max(worst_inf_rate, float(inf_rate))
+                saw_any_cond_metric = True
+
+            # Compute the central tendency + error band — either over
+            # all trials (default) or over feasible trials only.
+            if show_feasible_only and gamma_db is not None:
+                m, p25, p75, s = _feasible_stats(ar, x)
+                if m is None:
+                    logger.warning(
+                        "plot_sweep: %s has 0 feasible trials at x=%s, "
+                        "gamma_db=%s — skipping point.",
+                        name, x, gamma_db,
+                    )
+                    continue
+            else:
+                try:
+                    m = ar.mean(metric)
+                except (KeyError, ValueError) as e:
+                    logger.warning("mean failed for %s at x=%s: %s",
+                                   name, x, e)
+                    continue
+                if error == "iqr":
+                    p25 = ar.percentile(metric, 25)
+                    p75 = ar.percentile(metric, 75)
+                    s   = None
+                elif error == "std":
+                    s   = ar.std(metric)
+                    p25 = p75 = None
+                else:
+                    p25 = p75 = s = None
+
             xs_used.append(x)
             means.append(m)
             if error == "iqr":
-                lo.append(ar.percentile(metric, 25))
-                hi.append(ar.percentile(metric, 75))
+                lo.append(p25); hi.append(p75)
             elif error == "std":
-                s = ar.std(metric)
-                lo.append(m - s)
-                hi.append(m + s)
+                lo.append(m - s); hi.append(m + s)
+
         if not xs_used:
             continue
-        line, = ax.plot(xs_used, means, **style_for(name))
+
+        # Build label (optionally annotated with worst-case infeasibility).
+        style = dict(style_for(name))
+        if (gamma_db is not None and annotate_infeasibility
+                and saw_any_cond_metric):
+            base_label = style.get("label", name)
+            style["label"] = (f"{base_label}  "
+                              f"(max inf={100.0*worst_inf_rate:.1f}{pct_token})")
+
+        line, = ax.plot(xs_used, means, **style)
         if error != "none":
             ax.fill_between(xs_used, lo, hi,
                             color=line.get_color(), alpha=0.15,
                             linewidth=0)
+
+    # γ marker (horizontal line at the SINR floor).
+    if gamma_db is not None:
+        ax.axhline(float(gamma_db), color="k", linestyle=":",
+                   linewidth=0.8, alpha=0.6,
+                   label=rf"$\gamma$ = {float(gamma_db):.1f} dB")
 
     ax.set_xlabel(xlabel if xlabel is not None else "x")
     ax.set_ylabel(ylabel if ylabel is not None else metric)

@@ -349,15 +349,22 @@ def per_task_summary(experiment_name: str,
         if manifest_path.exists():
             with open(manifest_path) as f:
                 manifest = _json.load(f)
-        # Sidecar (.json next to result.npz) carries seed + runner_cfg.
+        # Sidecar layout depends on result kind:
+        #   - single → ``result.json`` next to ``result.npz``
+        #   - sweep  → ``result_<axis>_<v>.json`` (one per sweep value);
+        #              all share the same runner_cfg, and per_algorithm_scalars
+        #              n_trials_total is per-axis-value (the canonical
+        #              "trials per parameter value" for a sweep).
+        # Glob handles both: ``result.json`` matches the literal name for
+        # single, and ``result_*.json`` for sweep.
+        sidecar_candidates = sorted(path.glob("result*.json"))
         sidecar = {}
-        sidecar_path = path / "result.json"
-        if sidecar_path.exists():
-            with open(sidecar_path) as f:
+        if sidecar_candidates:
+            with open(sidecar_candidates[0]) as f:
                 sidecar = _json.load(f)
         runner_cfg = sidecar.get("runner_cfg") or {}
         per_algo = sidecar.get("per_algorithm_scalars") or {}
-        # Trials: take max across algos (should all match).
+        # Trials: take max across algos (they should all match).
         n_trials = max(
             (int(p.get("n_trials_total", 0)) for p in per_algo.values()),
             default=0,
