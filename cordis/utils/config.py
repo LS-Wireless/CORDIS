@@ -318,6 +318,31 @@ class ADMMConfig:
     # ── Initialization ────────────────────────────────────────────────────
     warm_start_from_split: bool = True  # Initialise W^(0) from CORDIS-Split Phase I
 
+    # ── Best-iterate selection (Stage 22a) ────────────────────────────────
+    # When the algorithm runs to ``n_max`` without satisfying the
+    # primal/dual residual tolerances, it returns the best W seen so far.
+    # Two criteria are supported for selecting "best":
+    #
+    #   "residual_norm" (default):
+    #       Pick the iterate with the smallest combined primal-plus-dual
+    #       consensus residual.  Mathematically the most natural choice
+    #       since these residuals measure how close the iterate is to
+    #       satisfying the ADMM optimality conditions.  Robust to the
+    #       late-iteration oscillation around the SOC boundary that
+    #       fixed-ρ ADMM exhibits: the residual minimum lives in the
+    #       converged plateau, not in a swing-peak iteration that
+    #       happens to have high min-SINR by phase luck.
+    #
+    #   "min_sinr" (legacy):
+    #       Pick the iterate with the highest worst-user SINR, ties
+    #       broken by lower primal residual.  Maximises a quantity the
+    #       user can interpret directly, but on this algorithm it tends
+    #       to select swinging iterates from the post-convergence
+    #       oscillation region whose consensus is not actually tight,
+    #       so the reported W can fail to deliver its claimed SINR in
+    #       downstream evaluation.
+    best_iter_criterion: str = "residual_norm"
+
     # ── Solver ────────────────────────────────────────────────────────────
     solver: str = "CLARABEL"        # CVXPY solver: "CLARABEL" | "GUROBI" | "MOSEK"
 

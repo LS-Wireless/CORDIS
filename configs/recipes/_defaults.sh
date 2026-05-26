@@ -89,7 +89,7 @@ MAX_TX_APS_PER_TARGET="${MAX_TX_APS_PER_TARGET:-5}"
 MAX_RX_APS_PER_TARGET="${MAX_RX_APS_PER_TARGET:-3}"
 
 # ─── Algorithm — shared QoS target (γ_u for every algorithm) ─────────
-GAMMA_DB="${GAMMA_DB:-10.0}"
+GAMMA_DB="${GAMMA_DB:-5.0}"
 
 # ─── Algorithm — CORDIS-Split ────────────────────────────────────────
 SPLIT_EPSILON_REG="${SPLIT_EPSILON_REG:-0.01}"
@@ -100,10 +100,15 @@ SPLIT_XI_PENALTY="${SPLIT_XI_PENALTY:-10000.0}"
 # ─── Algorithm — CORDIS-ADMM ─────────────────────────────────────────
 ADMM_KAPPA="${ADMM_KAPPA:-1.0}"
 ADMM_RHO="${ADMM_RHO:-1.0}"
-ADMM_N_MAX="${ADMM_N_MAX:-50}"
+ADMM_N_MAX="${ADMM_N_MAX:-200}"
 ADMM_EPS_PRI="${ADMM_EPS_PRI:-1.0}"   # auto-rho settles residuals near 1
 ADMM_EPS_DUAL="${ADMM_EPS_DUAL:-1.0}"  # auto-rho settles residuals near 1
 ADMM_XI_SLACK="${ADMM_XI_SLACK:-10000.0}"
+# Stage 22a: best-iterate selection criterion when ADMM hits n_max
+# without converging.  Allowed values: "residual_norm" (default, picks
+# smallest r_pri+r_dual) | "min_sinr" (legacy, picks highest worst-user
+# SINR).  See ADMMConfig.best_iter_criterion docstring.
+ADMM_BEST_ITER_CRITERION="${ADMM_BEST_ITER_CRITERION:-residual_norm}"
 
 # ─── Simulation ──────────────────────────────────────────────────────
 # Trial count can be set in two ways:
@@ -173,6 +178,7 @@ SET_ARGS=(
     algorithm.admm.eps_pri="$ADMM_EPS_PRI"
     algorithm.admm.eps_dual="$ADMM_EPS_DUAL"
     algorithm.admm.xi_slack="$ADMM_XI_SLACK"
+    algorithm.admm.best_iter_criterion="$ADMM_BEST_ITER_CRITERION"
     simulation.n_trials="$N_TRIALS"
     simulation.seed="$SEED"
     simulation.n_jobs="$N_JOBS"

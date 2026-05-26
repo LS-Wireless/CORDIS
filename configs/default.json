@@ -77,16 +77,17 @@
     "clutter_offset_az_deg": 60.0
   },
   "algorithm": {
-    "gamma_db": 10.0,
+    "gamma_db": 5.0,
     "admm": {
       "kappa": 1.0,
       "rho": 1.0,
-      "n_max": 50,
+      "n_max": 200,
       "eps_pri": 1.0,
       "eps_dual": 1.0,
       "xi_slack": 10000.0,
       "target_priority_equal": true,
       "warm_start_from_split": true,
+      "best_iter_criterion": "residual_norm",
       "solver": "CLARABEL"
     },
     "split": {
@@ -99,7 +100,7 @@
     }
   },
   "simulation": {
-    "n_trials": 500,
+    "n_trials": 100,
     "seed": 42,
     "n_jobs": -1,
     "save_dir": "results/",

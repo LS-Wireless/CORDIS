@@ -9,7 +9,7 @@
 #      make plot-sinr_cdf      # plot the latest run for that experiment
 #      make all                # run every experiment
 #      make figures            # plot every figure (from latest)
-#      make validate           # run all stage validators (8a + 8b + 8c + 8d)
+#      make validate           # run all stage validators (from 8a/b/c/d to end)
 #      make submit-sinr_cdf    # sbatch the SLURM wrapper for one experiment
 #      make submit-all         # sbatch every experiment
 #      make clean-figures      # rm -rf figures/   (DESTRUCTIVE)
@@ -64,7 +64,7 @@ help:
 	@echo "  make submit-all         submit every experiment"
 	@echo
 	@echo "Validate:"
-	@echo "  make validate           run all stage validators (8a + 8b + 8c + 8d)"
+	@echo "  make validate           run all stage validators (from 8a/b/c/d to end)"
 	@echo "  make test               run pytest"
 	@echo
 	@echo "Maintenance:"

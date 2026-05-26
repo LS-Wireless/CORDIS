@@ -644,6 +644,7 @@ def solve_cordis_admm(
     xi_slack:   float = 1e4,
     slack_tol:  float = 1e-3,
     n_snapshots: int  = 1,
+    best_iter_criterion: str = "residual_norm",
     verbose:    bool  = False,
     progress:   bool  = False,
 ) -> ADMMResult:
@@ -807,9 +808,25 @@ def solve_cordis_admm(
     # where a tight-consensus iterate (low r_pri) has drifted into
     # low-SINR territory.  At feasible γ the best iterate IS the
     # converged one, so this is a no-regret change.
+    # ── Best-iterate selection (Stage 22a) ───────────────────────────────
+    # Two criteria are supported.  ``residual_norm`` (default) picks the
+    # iterate with the smallest combined primal+dual residual — the
+    # ADMM-natural optimality measure — and is robust to the late-
+    # iteration oscillation around the SOC boundary.  ``min_sinr``
+    # (legacy) picks the iterate with the highest worst-user SINR,
+    # ties broken by lower r_pri; on this algorithm it can select
+    # swinging iterates from the post-convergence region whose
+    # consensus isn't tight.  See the ADMMConfig docstring.
+    _ALLOWED_CRITERIA = ("residual_norm", "min_sinr")
+    if best_iter_criterion not in _ALLOWED_CRITERIA:
+        raise ValueError(
+            f"best_iter_criterion={best_iter_criterion!r} not in "
+            f"{_ALLOWED_CRITERIA}.  See ADMMConfig.best_iter_criterion."
+        )
     best_min_sinr   = -float("inf")
     best_r_pri      = float("inf")
     best_slack_norm = float("inf")
+    best_resid_norm = float("inf")     # Stage 22a: r_pri + r_dual tracker
     W_best     : Dict[int, NDArray[np.complex128]] = {
         a: W_cur[a].copy() for a in tx_idx
     }
@@ -1036,27 +1053,42 @@ def solve_cordis_admm(
         slack_hist.append(eps_new.copy())
         znorm_hist.append(z_norm_sum)
 
-        # ── Best-iterate snapshot (highest min-SINR seen) ────────────────
-        # Track the iterate that achieves the highest min-SINR — the
-        # metric the user actually cares about.  Ties broken by lower
-        # r_pri.  At feasible γ the converged iterate has min-SINR ≈ γ
-        # and is also the best by this rule, so this never regresses
-        # against the previous behaviour.  At infeasible γ, or when the
-        # algorithm hits ``n_admm_max`` before convergence, this returns
-        # the iterate that came closest to the SINR target rather than
-        # an iterate that drifted into deeper violation.
-        cand_min_sinr = float(sinr_vec.min()) if sinr_vec.size else 0.0
-        cand_slack    = float(np.max(eps_new)) if eps_new.size else 0.0
+        # ── Best-iterate snapshot ────────────────────────────────────────
+        # Two strategies (configurable via best_iter_criterion):
+        #
+        # 1. "residual_norm" (default):  pick the iterate with the smallest
+        #    combined primal+dual residual.  These residuals are the natural
+        #    ADMM optimality measure — small residuals mean the iterate
+        #    nearly satisfies the consensus constraint Σ_at l_at,u = z_u,
+        #    so the AP-side W actually delivers what the CPU-side SOC says
+        #    it should.  Ties broken by higher min-SINR.
+        #
+        # 2. "min_sinr" (legacy):  pick the iterate with the highest worst-
+        #    user SINR, ties broken by lower r_pri.  Direct optimisation of
+        #    the metric the user cares about, but susceptible to selecting
+        #    post-convergence swing peaks whose consensus is not actually
+        #    tight (so the W delivered doesn't match the SINR seen here).
+        cand_min_sinr   = float(sinr_vec.min()) if sinr_vec.size else 0.0
+        cand_slack      = float(np.max(eps_new)) if eps_new.size else 0.0
+        cand_resid_norm = float(r_pri + r_dual)
         take = False
         if all_ok:
-            if cand_min_sinr > best_min_sinr + 1e-12:
-                take = True                              # strictly higher min-SINR
-            elif (abs(cand_min_sinr - best_min_sinr) < 1e-12
-                  and r_pri < best_r_pri):
-                take = True                              # same min-SINR, tighter consensus
+            if best_iter_criterion == "residual_norm":
+                if cand_resid_norm < best_resid_norm - 1e-12:
+                    take = True                      # strictly tighter consensus
+                elif (abs(cand_resid_norm - best_resid_norm) < 1e-12
+                      and cand_min_sinr > best_min_sinr):
+                    take = True                      # same residual, higher SINR
+            else:  # "min_sinr"
+                if cand_min_sinr > best_min_sinr + 1e-12:
+                    take = True                      # strictly higher min-SINR
+                elif (abs(cand_min_sinr - best_min_sinr) < 1e-12
+                      and r_pri < best_r_pri):
+                    take = True                      # same min-SINR, tighter consensus
         if take:
             best_min_sinr   = cand_min_sinr
             best_r_pri      = r_pri
+            best_resid_norm = cand_resid_norm
             best_slack_norm = cand_slack
             W_best     = {a: W_new[a].copy() for a in tx_idx}
             best_iter  = n_iter + 1

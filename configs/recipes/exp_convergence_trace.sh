@@ -24,7 +24,8 @@ fi
 
 # ─── OVERRIDES — edit these ──────────────────────────────────────────
 NAME="exp_convergence_trace"
-ADMM_N_MAX=80    # Headroom past convergence to see plateau
+# (ADMM_N_MAX inherits from _defaults.sh — 200 iterations gives ample
+# headroom past the usual convergence window to see plateau / drift.)
 
 # ─── Defaults for everything else ────────────────────────────────────
 source "$SCRIPT_DIR/_defaults.sh"
