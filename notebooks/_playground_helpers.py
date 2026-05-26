@@ -331,9 +331,12 @@ def per_task_summary(experiment_name: str,
     Notes
     -----
     Seeds follow the recipe in ``_array_common.sh``:
-    ``SEED = BASE_SEED + ARRAY_TASK_ID``.  Trial seeds within a task
-    come from ``numpy.random.SeedSequence(SEED).spawn(n_trials)``, so
-    different tasks produce disjoint trial streams.
+    ``SEED = BASE_SEED + ARRAY_TASK_ID`` (exported as the SLURM env
+    var ``SEED``, then forwarded to the runner via ``--seed``, which
+    populates ``RunnerConfig.base_seed`` — which is the field this
+    function returns under the ``"seed"`` key).  Trial seeds within
+    a task come from ``numpy.random.SeedSequence(base_seed).spawn(
+    n_trials)``, so different tasks produce disjoint trial streams.
     """
     import json as _json
     task_dirs = find_per_task_dirs_for(experiment_name, array_id,
@@ -359,9 +362,13 @@ def per_task_summary(experiment_name: str,
             (int(p.get("n_trials_total", 0)) for p in per_algo.values()),
             default=0,
         )
+        # RunnerConfig's field is named ``base_seed`` (the dataclass
+        # attribute that asdict() serializes).  Fall back to ``seed``
+        # for any legacy sidecars that may have used the CLI-flag name.
+        seed = runner_cfg.get("base_seed", runner_cfg.get("seed"))
         rows.append({
             "task_id":         task_id,
-            "seed":            runner_cfg.get("seed"),
+            "seed":            seed,
             "n_trials":        n_trials,
             "n_drops":         runner_cfg.get("n_drops"),
             "n_realizations":  runner_cfg.get("n_realizations_per_drop"),
