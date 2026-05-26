@@ -737,18 +737,29 @@ def merge_experiment_results(
 def _fmt_value(v: Any) -> str:
     """Format a numeric sweep value for use in a filename.
 
-    Mirrors ``cordis.experiments.result._fmt_value`` so file names match.
+    Mirrors ``cordis.experiments.result._fmt_value`` byte-for-byte so
+    the aggregator looks for the same filenames the runner wrote.  See
+    ``cordis/experiments/result.py`` — both functions MUST stay in
+    sync; otherwise sweep values with non-integer keys (e.g. κ=0.25)
+    are silently skipped because the aggregator builds e.g.
+    ``result_kappa_0.25.npz`` while the actual on-disk file is
+    ``result_kappa_0p25.npz``.
+
+    Format rules:
+      - Integers (or whole-valued floats) → ``str(int(v))``.
+      - Other floats → 6 significant digits via ``%.6g``, with
+        ``.`` → ``p`` and ``-`` → ``m`` so the result is filesystem-safe.
+
+    Examples:
+        0       → "0"
+        0.25    → "0p25"
+        0.5     → "0p5"
+        -3.14   → "m3p14"
+        1.23e-5 → "1p23em05"
     """
-    # Match the cordis idiom: integers as-is, floats with up to 6 digits,
-    # negative sign retained.  If the value is exactly an int, format as int.
-    if isinstance(v, (int, np.integer)):
+    if isinstance(v, (int, np.integer)) or float(v).is_integer():
         return str(int(v))
-    f = float(v)
-    if f.is_integer():
-        return str(int(f))
-    # Trim trailing zeros from a fixed-point representation.
-    s = f"{f:.6f}".rstrip("0").rstrip(".")
-    return s
+    return f"{float(v):.6g}".replace(".", "p").replace("-", "m")
 
 
 def _value_filename(axis_name: str, value: Any) -> str:

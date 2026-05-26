@@ -430,6 +430,75 @@ def test_15_sync_array_id_flag():
     )
 
 
+@_register("Test 16: aggregator _fmt_value mirrors cordis _fmt_value "
+           "for non-integer sweep values (kappa=0.25 regression)")
+def test_16_aggregator_fmt_value_roundtrip():
+    """Stage 22a follow-up: prevent the silent-drop bug where the
+    aggregator built ``result_<axis>_0.25.npz`` while the runner had
+    actually written ``result_<axis>_0p25.npz``.  The bug surfaced on
+    ``kappa_sweep`` with values 0, 0.25, 0.5, 1, 2 — the integer-valued
+    points came through but 0.25 and 0.5 were silently missing from
+    the aggregated output (only an INFO-level "missing" warning, the
+    aggregator continued and reported success).
+
+    Root cause was a mismatch between the aggregator's local
+    ``_fmt_value`` (lacked ``.→p`` and ``-→m`` substitutions, used
+    ``%.6f`` with manual stripping instead of ``%.6g``) and the
+    canonical one in ``cordis.experiments.result._fmt_value``.
+
+    This test imports BOTH and asserts byte-equality on a panel of
+    values that would catch every kind of disagreement.
+    """
+    import importlib.util as _ilu
+
+    # Aggregator's _fmt_value — load by path, no package import,
+    # so this test works even if cordis isn't importable in the
+    # container.
+    _spec = _ilu.spec_from_file_location(
+        "agg_for_test",
+        str(REPO_ROOT / "scripts" / "aggregate_array_batch.py"),
+    )
+    assert _spec is not None and _spec.loader is not None
+    _agg = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_agg)
+    agg_fmt = _agg._fmt_value
+
+    # The canonical _fmt_value; if cordis isn't importable in the
+    # container, fall back to an inline copy of the canonical body
+    # (kept in sync with cordis/experiments/result.py).
+    try:
+        from cordis.experiments.result import _fmt_value as cordis_fmt
+    except Exception:
+        def cordis_fmt(v):
+            import numpy as _np
+            if isinstance(v, (int, _np.integer)) or float(v).is_integer():
+                return str(int(v))
+            return f"{float(v):.6g}".replace(".", "p").replace("-", "m")
+
+    panel = [
+        0, 1, 2, 10, 100,           # integers — would work even with the bug
+        0.25, 0.5, 0.125, 0.75,     # the bug surface: non-integer floats
+        1.5, 2.5, 3.14,             # mixed-magnitude
+        -1.0, -0.5, -3.14,          # negatives — '-' must become 'm'
+        1.23e-5, 1.23e5,            # extreme scales
+        1.0, 2.0,                   # whole-valued floats → int branch
+    ]
+    mismatches = []
+    for v in panel:
+        a = agg_fmt(v)
+        c = cordis_fmt(v)
+        if a != c:
+            mismatches.append((v, a, c))
+    assert not mismatches, (
+        "aggregator _fmt_value disagrees with cordis _fmt_value on "
+        f"{len(mismatches)} input(s) (would cause silent sweep-value "
+        f"drops during aggregation): "
+        + ", ".join(f"{v}→agg={a!r} vs cordis={c!r}"
+                    for v, a, c in mismatches[:5])
+        + (" ..." if len(mismatches) > 5 else "")
+    )
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Runner
 # ═════════════════════════════════════════════════════════════════════════════
