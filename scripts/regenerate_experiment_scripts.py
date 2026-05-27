@@ -331,14 +331,18 @@ plt.close(fig)
             ("--realization-seed", "int", "None",
              "Channel realisation seed for the single trial. "
              "Empty → use registry default."),
-            ("--n-admm-max",       "int", "None",
-             "Cap on ADMM iterations. "
-             "Empty → use registry default (set in cordis/experiments/registry.py)."),
+            # n_admm_max is NOT exposed here: it lives in the config as
+            # algorithm.admm.n_max (single source of truth, same as every
+            # other ADMM-using experiment).  To override at runtime, set
+            # ADMM_N_MAX when running the recipe:
+            #     ADMM_N_MAX=250 bash configs/recipes/exp_convergence_trace.sh
+            #     bash scripts/exp_convergence_trace.sh
         ],
         "extra_run_kwargs": [
             ("drop_seed",         "args.drop_seed"),
             ("realization_seed",  "args.realization_seed"),
-            ("n_admm_max",        "args.n_admm_max"),
+            # n_admm_max is read from cfg.algorithm.admm.n_max inside
+            # run_convergence_trace via _admm_kwargs_from_cfg(cfg).
         ],
         "plot_call": '''\
 apply_paper_style()

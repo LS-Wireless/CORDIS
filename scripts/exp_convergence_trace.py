@@ -38,14 +38,11 @@ def main() -> None:
                         help='Topology drop seed for the single trial. Empty → use registry default.')
     parser.add_argument("--realization-seed", type=int, default=None,
                         help='Channel realisation seed for the single trial. Empty → use registry default.')
-    parser.add_argument("--n-admm-max", type=int, default=None,
-                        help='Cap on ADMM iterations. Empty → use registry default (set in cordis/experiments/registry.py).')
     args = parser.parse_args()
 
     extra_kwargs = {
         "drop_seed": args.drop_seed,
         "realization_seed": args.realization_seed,
-        "n_admm_max": args.n_admm_max,
     }
     # Drop any None-valued sweep ranges so the registry uses its defaults.
     extra_kwargs = {k: v for k, v in extra_kwargs.items() if v is not None}

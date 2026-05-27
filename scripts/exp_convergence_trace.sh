@@ -48,7 +48,6 @@ RUN_ID="${RUN_ID:-}"                  # empty → runner auto-timestamps the lea
 SPECS="${SPECS:-}"
 DROP_SEED="${DROP_SEED:-}"
 REALIZATION_SEED="${REALIZATION_SEED:-}"
-N_ADMM_MAX="${N_ADMM_MAX:-}"
 
 # ─── Run ─────────────────────────────────────────────────────────────
 EXP_CONFIG_FLAG=""
@@ -83,7 +82,6 @@ OUTPUT_ROOT_ARGS=()
 SWEEP_ARGS=()
 [ -n "$DROP_SEED" ] && SWEEP_ARGS+=(--drop-seed "$DROP_SEED")
 [ -n "$REALIZATION_SEED" ] && SWEEP_ARGS+=(--realization-seed "$REALIZATION_SEED")
-[ -n "$N_ADMM_MAX" ] && SWEEP_ARGS+=(--n-admm-max "$N_ADMM_MAX")
 python3 scripts/exp_convergence_trace.py \
     --base-config   "$BASE_CONFIG"   \
     $EXP_CONFIG_FLAG                 \

@@ -621,11 +621,18 @@ def run_convergence_trace(
     *,
     drop_seed: int = 42,
     realization_seed: int = 43,
-    n_admm_max: int = 30,
+    n_admm_max: Optional[int] = None,
     spec_kwargs: Optional[Dict[str, Any]] = None,
 ) -> ExperimentResult:
     """
     Run CORDIS-ADMM on a single trial and capture the full history.
+
+    ADMM iteration cap (``n_admm_max``) is read from
+    ``cfg.algorithm.admm.n_max`` — the single source of truth, same as
+    every other ADMM-using experiment.  Pass ``n_admm_max=N`` only if
+    you need to override the config for a one-off call (kept as a
+    kwarg for backward compatibility / programmatic callers; the
+    .sh/.py launcher chain no longer plumbs this through).
 
     The Monte-Carlo runner aggregates per-trial outputs and only stores
     summary diagnostics, so this experiment bypasses the runner and
@@ -636,7 +643,10 @@ def run_convergence_trace(
 
     spec_kwargs = spec_kwargs or {}
     spec_kwargs.setdefault("n_ue", _get_n_ue(cfg))
-    spec_kwargs.setdefault("n_admm_max", n_admm_max)
+    # Only setdefault n_admm_max if the caller explicitly passed it;
+    # otherwise let cfg.algorithm.admm.n_max win (via the loop below).
+    if n_admm_max is not None:
+        spec_kwargs.setdefault("n_admm_max", n_admm_max)
     # Forward cfg.algorithm.admm.* defaults; explicit kwargs above still win.
     for _k, _v in _admm_kwargs_from_cfg(cfg).items():
         spec_kwargs.setdefault(_k, _v)
