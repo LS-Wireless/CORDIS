@@ -104,6 +104,7 @@ Generated automatically from `cordis/utils/config.py`.
 | `xi_slack` | float | `10000.0` | - | >> 1 (typical: 1e3 to 1e5) | Slack variable penalty xi >> 0 in P-Central; ensures feasibility of SOC constraint |
 | `target_priority_equal` | bool | `true` | - | {true|false} | Use equal priority weights omega_t = 1 for all targets; if false supply weights at runtime |
 | `warm_start_from_split` | bool | `true` | - | {true|false} | Initialise ADMM beamformers W^(0) from CORDIS-Split Phase I output |
+| `best_iter_criterion` | str | `residual_norm` | - | {residual_norm|min_sinr} | Criterion for selecting the 'best iterate' returned by solve_cordis_admm.  'residual_norm' (default) picks the iterate that minimises r_pri + r_dual (the converged plateau).  'min_sinr' picks the iterate with the highest min-user SINR (legacy behaviour; may pick a swing peak in non-converged trajectories).  See Stage 22a. |
 | `solver` | str | `CLARABEL` | - | {CLARABEL|GUROBI|MOSEK|SCS} | CVXPY backend solver for local QCQP subproblems (P-Local) |
 
 ## Algorithm: CORDIS-Split

@@ -13,6 +13,7 @@ Regenerate with: `./scripts/list_scripts.sh`
   ────────────────────────────────── ──────────────────────────────────
   _exp_common.py                     scripts/_exp_common.py
   _plot_common.py                    scripts/_plot_common.py
+  aggregate_array_batch.py           scripts/aggregate_array_batch.py
   create_config.py                   Create a new CORDIS experiment ...
   exp_antennas_sweep.py              scripts/exp_antennas_sweep.py
   exp_clutter_cnr_sweep.py           scripts/exp_clutter_cnr_sweep.py
@@ -50,6 +51,9 @@ Regenerate with: `./scripts/list_scripts.sh`
   validate_stage17.py                scripts/validate_stage17.py
   validate_stage18.py                scripts/validate_stage18.py
   validate_stage19.py                scripts/validate_stage19.py
+  validate_stage20.py                scripts/validate_stage20.py
+  validate_stage21.py                scripts/validate_stage21.py
+  validate_stage22.py                scripts/validate_stage22.py
   validate_stage6a.py                Stage 6a validation — CORDIS-Sp...
   validate_stage6b.py                Stage 6b validation — Centraliz...
   validate_stage6c.py                Stage 6c validation — CORDIS-AD...

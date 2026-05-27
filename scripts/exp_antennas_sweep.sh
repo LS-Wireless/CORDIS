@@ -40,11 +40,11 @@ N_WORKERS="${N_WORKERS:--1}"          # -1 = all cores; 1 = sequential
 SEED="${SEED:-}"                      # default: config simulation.seed
 OUTPUT_ROOT="${OUTPUT_ROOT:-}"        # default: config simulation.output_root
 RUN_ID="${RUN_ID:-}"                  # empty → runner auto-timestamps the leaf dir
-# Algorithm selection — empty → per-experiment default
-# (sinr_cdf/scnr_cdf → all_algorithms; gamma/kappa/clutter sweeps →
-# cordis_vs_centralized; antennas_sweep → cordis_vs_benchmarks).  Set
-# to one of: cordis_only, cordis_vs_centralized, cordis_vs_benchmarks,
-# all_algorithms — to override.
+# Algorithm selection — empty → 'all_algorithms' (the default for
+# every CDF and sweep experiment since Stage 17; silently ignored by
+# convergence_trace and fronthaul_table).  Override with one of:
+# cordis_only, cordis_vs_centralized, cordis_vs_benchmarks,
+# all_algorithms.
 SPECS="${SPECS:-}"
 N_ANT_VALUES="${N_ANT_VALUES:-}"
 

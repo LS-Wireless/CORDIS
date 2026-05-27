@@ -1165,6 +1165,16 @@ PARAM_REGISTRY: Dict[str, Dict[str, str]] = {
         "unit":  "-",
         "range": "{CLARABEL|GUROBI|MOSEK|SCS}",
     },
+    "algorithm.admm.best_iter_criterion": {
+        "help":  ("Criterion for selecting the 'best iterate' returned by "
+                  "solve_cordis_admm.  'residual_norm' (default) picks the "
+                  "iterate that minimises r_pri + r_dual (the converged "
+                  "plateau).  'min_sinr' picks the iterate with the highest "
+                  "min-user SINR (legacy behaviour; may pick a swing peak "
+                  "in non-converged trajectories).  See Stage 22a."),
+        "unit":  "-",
+        "range": "{residual_norm|min_sinr}",
+    },
 
     # ── AlgorithmConfig (umbrella — shared by every algorithm) ───────────
     "algorithm.gamma_db": {

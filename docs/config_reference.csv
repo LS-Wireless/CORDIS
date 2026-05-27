@@ -1,0 +1,96 @@
+path,type,default,unit,range,description
+topology.type,str,circle,-,{circle|random|grid},AP placement geometry
+topology.ap_radius_m,float,650.0,m,> 0,Radius of the circle on which APs are placed (circle layout)
+topology.ue_max_radius_m,float,1000.0,m,> ue_min_radius_m,Outer radius of the annulus in which UEs are dropped
+topology.ue_min_radius_m,float,35.0,m,>= 0,Inner radius of the UE placement annulus (minimum UE-origin distance)
+topology.tg_max_radius_m,float,1000.0,m,> tg_min_radius_m,Outer radius of the annulus in which targets are dropped
+topology.tg_min_radius_m,float,35.0,m,>= 0,Inner radius of the target placement annulus
+topology.n_ap,int,6,-,>= 2,Total number of APs (|A| = |A_t| + |A_r|)
+topology.n_ue,int,4,-,>= 1,Number of single-antenna communication users (N_ue)
+topology.n_targets,int,1,-,>= 1,Number of sensing targets (N_t)
+topology.n_ant,int,10,-,>= 1,Number of antenna elements per AP (M_t = M_r = M)
+topology.n_rf_chains,int,10,-,"[1, n_ant]",Number of RF chains per AP; limits simultaneous streams (N_RF <= M)
+topology.array_type,str,UCA,-,{ULA|UCA},Antenna array geometry at every AP
+topology.antenna_spacing_factor,float,0.5,lambda,"(0, 1]",Normalised inter-element spacing d/lambda
+topology.n_sensing_rx,int,1,-,"[1, n_ap - 1]",Number of APs dedicated to sensing reception (|A_r|); remaining APs transmit
+topology.h_ap_m,float,10.0,m,> h_ue_m,AP antenna height above ground (used in 3GPP path loss)
+topology.h_ue_m,float,1.5,m,> 0,UE antenna height above ground
+topology.h_tg_m,float,1.5,m,>= 0,Target height above ground
+topology.grid_n_rows,int,3,-,>= 1,Number of rows in the AP grid (grid layout only); total APs = rows x cols
+topology.grid_n_cols,int,2,-,>= 1,Number of columns in the AP grid (grid layout only)
+topology.grid_spacing_m,float,433.0,m,> 0,Distance between adjacent APs in the grid
+frequency.carrier_freq_ghz,float,3.5,GHz,"[0.5, 100]  (3GPP TR 38.901 validity range)",Carrier frequency f_c; determines wavelength and path loss exponents
+frequency.bandwidth_mhz,float,20.0,MHz,> 0,Total system bandwidth B
+frequency.n_subcarriers,int,64,-,"power of 2, >= rb_n_subcarriers",Total number of OFDM subcarriers N_sc
+frequency.rb_n_subcarriers,int,12,-,>= 1,Number of subcarriers per resource block Q
+frequency.rb_n_symbols,int,14,-,>= 1,Number of OFDM symbols per resource block K
+frequency.subcarrier_spacing_khz,float,15.0,kHz,> 0,OFDM subcarrier spacing Delta_f (15 kHz = 5G NR numerology 0)
+frequency.cp_fraction,float,0.0714,-,"(0, 0.25]",Cyclic prefix duration as a fraction of the OFDM symbol period
+channel.model,str,3gpp_umi_rician,-,{3gpp_umi_rician},Channel model identifier string (reserved for future model selection)
+channel.scenario,str,UMi,-,{UMi|UMa|RMa},3GPP propagation scenario; controls path loss and LoS probability formulas
+channel.environment,str,StreetCanyon,-,-,
+channel.snr_db,float,137.0,dB,any real (cell-free typical: 124 to 144; default: 137),"Transmit SNR = P_max / sigma_n^2; sets per-AP power budget.  At B=20 MHz, NF=7 dB, T=290 K, the mapping is P_max[W] = 10^((SNR_dB - 124)/10).  Examples: 124 dB = 1 W, 130 dB = 4 W, 134 dB = 10 W, 137 dB = 20 W (default), 140 dB = 40 W, 144 dB = 100 W. The default 137 dB matches the upper end of 5G mMIMO mid-band micro/small-cell conducted power (2-20 W).  Note: realistic urban-micro pathloss is ~120-130 dB at 500 m / 3 GHz, so SNR_dB << 120 leaves no link budget"
+channel.noise_figure_db,float,7.0,dB,>= 0,Receiver noise figure NF added to thermal noise floor
+channel.noise_temp_k,float,290.0,K,> 0 (standard: 290),Thermal noise reference temperature T_0
+channel.tau_f,int,200,samples,> tau_p + tau_d,TDD frame size tau_f in channel uses; must satisfy tau_f >= tau_p + tau_d
+channel.tau_p,int,10,samples,>= 1,Pilot sequence length tau_p; set >= n_ue to avoid pilot contamination
+channel.tau_d,int,100,samples,>= 1,Number of downlink ISAC symbols per TDD frame (tau_d)
+channel.pilot_power_db,float,120.0,dB,any real; 80-130 dB for 3GPP UMi at 50-650 m; 10-30 dB only for no-path-loss toy models,"Uplink pilot transmit SNR: 10 log10(P_p / sigma_n^2). The RECEIVED pilot SNR at the AP is SNR_rx = (P_p/sigma_n^2) x tau_p x beta_{au}. With 3GPP UMi path loss, beta << 1, so this must be set much higher than the data SNR to compensate. Rule of thumb: pilot_power_db = snr_db + |PL_dB|. 120 dB corresponds to P_p ~ 200 mW (23 dBm), which is physically realistic."
+channel.shadow_fading_los_std_db,float,4.0,dB,>= 0,Shadow fading standard deviation sigma_SF for LoS links (3GPP UMi: 4 dB)
+channel.shadow_fading_nlos_std_db,float,7.82,dB,>= 0,Shadow fading standard deviation sigma_SF for NLoS links (3GPP UMi: 7.82 dB)
+channel.shadow_corr_distance_m,float,50.0,m,> 0 (3GPP default: 50 m),Shadow fading spatial decorrelation distance D_corr between UEs at a common AP
+channel.rician_k_db_mean,float,9.0,dB,any real,Mean Rician K-factor for LoS links (drawn from Gaussian; 3GPP UMi LoS: 9 dB)
+channel.rician_k_db_std,float,5.0,dB,>= 0,Standard deviation of the Rician K-factor (3GPP UMi: 5 dB)
+channel.as_azimuth_deg_std_los,float,5.0,deg,>= 0,Azimuth angular spread (ASD) sigma_phi for LoS links; used to build C_{au}
+channel.as_azimuth_deg_std_nlos,float,22.5,deg,>= 0,Azimuth angular spread (ASD) sigma_phi for NLoS links
+channel.as_elevation_deg_std_los,float,3.0,deg,>= 0,Elevation angular spread (ESD) sigma_theta for LoS links
+channel.as_elevation_deg_std_nlos,float,7.0,deg,>= 0,Elevation angular spread (ESD) sigma_theta for NLoS links
+channel.n_spatial_samples,int,2000,-,>= 100 (typical: 1000-5000),Monte Carlo samples for integrating the spatial correlation matrix C_{au}; higher = more accurate but slower
+channel.shared_scatter_rank,int,0,-,"[0, n_ant)",Rank r of shared scattering subspace B_a (inter-user correlation); 0 = disabled
+channel.shared_scatter_power,float,0.1,-,"[0, 1)",Fraction of NLoS power allocated to the shared scattering subspace B_a
+channel.estimation_method,str,MMSE,-,"{MMSE|LS|perfect}  (perfect = genie-aided, zero estimation error)",Channel estimation algorithm at transmit APs
+channel.mmwave_n_clusters,int,2,-,>= 1,Number of mmWave scattering clusters (active when carrier_freq_ghz > 6)
+channel.mmwave_n_rays,int,10,-,>= 1,Number of rays per mmWave cluster
+channel.mmwave_cluster_as_deg,float,10.0,deg,> 0,Per-cluster angular spread for mmWave channel
+sensing.sigma_rcs_sq_db,float,-3.0,dB,any real (typical: -10 to 10),RCS power variance sigma_RCS^2 = E[|zeta_t|^2]; Swerling-I model
+sensing.swerling_model,int,1,-,{0|1},"Target RCS fluctuation model: 0 = deterministic, 1 = Swerling-I (CN)"
+sensing.rx_strategy,str,single_closest_centroid,-,{single_closest_centroid|single_farthest_centroid|per_target_closest|assent_file|assent_live},Receive AP selection strategy; determines which APs collect target echoes
+sensing.los_model,str,always,-,{always|3gpp_umi|deterministic} (default: always),LoS availability model for target s_t in (eq. sensing-channel-target).  'always' forces s_t=1 for all bistatic links — required by the paper's rank-one LoS-only target channel model (Proposition 3) because s_t=0 zeros out the entire target echo and SCNR drops to the -300 dB sentinel.  '3gpp_umi' uses distance-dependent stochastic LoS probability (realistic but most urban targets become undetectable).  'deterministic' uses a fixed P_LoS via los_probability_override
+sensing.los_probability_override,Optional[float],null,-,"[0, 1] or null",Fixed P_LoS value for all targets when los_model='deterministic'; null = use model
+sensing.multi_static,bool,true,-,{true|false},Enable multi-static sensing (multiple TX/RX AP pairs per target)
+sensing.max_tx_aps_per_target,int,5,-,"[1, n_ap - 1]",Maximum number of transmit APs illuminating a single target K_tx
+sensing.max_rx_aps_per_target,int,3,-,"[1, n_sensing_rx]",Maximum number of receive APs processing echoes from a single target K_rx
+sensing.n_snapshots,int,20,symbols,>= 1,Number of slow-time STAP snapshots T; multiplicative temporal gain in SCNR
+sensing.sigma_clt,Optional[float],null,-,null OR >= 0,"OPTIONAL explicit override for sigma_clt.  If null (default), sigma_clt is derived from clutter_cnr_db; if set, this value is used directly (sigma_clt^2 = sigma_clt^2, ignoring CNR)."
+sensing.clutter_cnr_db,float,-10.0,dB,any real (typical: -20 to 0),Clutter-to-noise ratio (CNR); sets sigma_clt^2 = 10^(CNR/10) * sigma_n^2.  Used only when sensing.sigma_clt is null (default).
+sensing.rho_clt_model,str,constant,-,{constant|jakes|gaussian}  (constant => rho=1 for all lags),Temporal autocorrelation model for the clutter Doppler process rho_clt(Delta_tau)
+sensing.rho_clt_bandwidth,float,0.1,-,"(0, 0.5]",Normalised clutter Doppler bandwidth (fraction of PRF); used by jakes/gaussian models
+sensing.clutter_as_deg,float,15.0,deg,> 0,Angular spread of clutter returns; controls spatial correlation C_a of clutter
+sensing.clutter_center_strategy,str,target_centroid,-,{target_centroid|offset|uniform|random},"Spatial placement strategy for the clutter Power Angular Spectrum (PAS) at each transmit AP. Controls how clutter geometry couples to beam steering and therefore how kappa trades off clutter avoidance against beam quality. 'target_centroid': PAS centred on the AP->target-centroid direction (clutter and target spatially aligned; high kappa pushes the beam away from the target, collapsing both SCNR and SINR for any UE the target shadows). 'offset': PAS centred at (target azimuth + clutter_offset_az_deg), decoupling clutter avoidance from comm coverage. 'uniform': PAS spans the full azimuth (effectively C ~ (P_clt/M)*I); the clutter penalty becomes a global power regulariser and kappa no longer steers the beam. 'random': per-AP random azimuth drawn from U[-pi, pi]; useful for Monte-Carlo over clutter geometries."
+sensing.clutter_offset_az_deg,float,60.0,deg,any real (typical: 30 to 90),"Azimuth offset added to the target azimuth when clutter_center_strategy='offset'; the clutter PAS is centred at (target azimuth + clutter_offset_az_deg). Larger values move the clutter further from the target direction, reducing the geometric coupling between sensing gain and clutter penalty. Ignored by other strategies."
+algorithm.admm.kappa,float,1.0,-,>= 0 (0 = ignore clutter in objective),Clutter penalty weight kappa in the linear sensing surrogate U_cpu^sens
+algorithm.admm.rho,float,1.0,-,> 0 (typical: 0.1 to 10),ADMM penalty parameter rho controlling consensus convergence speed
+algorithm.admm.n_max,int,50,-,>= 1,Maximum number of ADMM iterations N_max before forced termination
+algorithm.admm.eps_pri,float,1.0,-,> 0 (typical: 0.3 to 1.0; default: 1.0),"Primal residual convergence threshold ε_pri.  With the auto-balanced ρ (rho=1), residuals settle near 1 in SNR-amplitude units, so tolerances of 0.3-1.0 match the algorithm's natural equilibrium.  Values << 0.1 require rho > 1 (risks SCA destabilisation) and often cause ADMM to run to n_max without ever triggering the stop criterion"
+algorithm.admm.eps_dual,float,1.0,-,> 0 (typical: 0.3 to 1.0; default: 1.0),Dual residual convergence threshold ε_dual.  Same scaling considerations as eps_pri — keep at O(1) under default rho=1 auto-balance
+algorithm.admm.xi_slack,float,10000.0,-,>> 1 (typical: 1e3 to 1e5),Slack variable penalty xi >> 0 in P-Central; ensures feasibility of SOC constraint
+algorithm.admm.target_priority_equal,bool,true,-,{true|false},Use equal priority weights omega_t = 1 for all targets; if false supply weights at runtime
+algorithm.admm.warm_start_from_split,bool,true,-,{true|false},Initialise ADMM beamformers W^(0) from CORDIS-Split Phase I output
+algorithm.admm.best_iter_criterion,str,residual_norm,-,{residual_norm|min_sinr},Criterion for selecting the 'best iterate' returned by solve_cordis_admm.  'residual_norm' (default) picks the iterate that minimises r_pri + r_dual (the converged plateau).  'min_sinr' picks the iterate with the highest min-user SINR (legacy behaviour; may pick a swing peak in non-converged trajectories).  See Stage 22a.
+algorithm.admm.solver,str,CLARABEL,-,{CLARABEL|GUROBI|MOSEK|SCS},CVXPY backend solver for local QCQP subproblems (P-Local)
+algorithm.split.epsilon_reg,float,0.01,-,> 0 (typical: 1e-3 to 1e-1),Regularisation parameter epsilon in LR-MMSE precoder (eq. split-comm-bf)
+algorithm.split.epsilon_nsc,float,0.001,-,> 0 (typical: 1e-4 to 1e-2),Loading factor epsilon for null-space projection P_perp in NS-C beamformer
+algorithm.split.target_priority_equal,bool,true,-,{true|false},Use equal priority weights omega_t = 1 for all targets in NS-C allocation
+algorithm.split.kappa,float,1.0,-,>= 0,Clutter penalty weight kappa in the P-Split sensing utility U_cpu^sens
+algorithm.split.xi_penalty,float,10000.0,-,>> 1 (typical: 1e3 to 1e5),Slack penalty xi >> 0 in P-Split; penalises violation of SINR QoS constraint
+algorithm.split.solver,str,CLARABEL,-,{CLARABEL|GUROBI|MOSEK|SCS},CVXPY backend solver for P-Split convex program
+simulation.n_trials,int,500,-,>= 1,Number of independent Monte Carlo realisations
+simulation.seed,int,42,-,>= 0,Master random seed; fully determines all random draws when fixed
+simulation.n_jobs,int,-1,-,-1 or >= 1,Number of parallel workers for Monte Carlo (-1 = all CPU cores)
+simulation.save_dir,str,results/,-,any valid path,Root directory for saved result files (.npz + _meta.json pairs)
+simulation.tag,str,,-,any string,Short label appended to output filenames for easy identification
+simulation.metrics,List[str],"['sinr_cdf', 'scnr_cdf', 'fronthaul', 'convergence']",-,-,
+simulation.benchmarks,List[str],"['centralized', 'mrt_centpa', 'zf_centpa', 'random_bf']",-,-,
+simulation.log_level,str,INFO,-,{DEBUG|INFO|WARNING|ERROR},Python logging level for the cordis.* logger hierarchy
+simulation.log_file,Optional[str],null,-,-,
+simulation.progress_bar,bool,true,-,-,

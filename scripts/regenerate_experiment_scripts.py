@@ -585,11 +585,11 @@ N_WORKERS="${{N_WORKERS:--1}}"          # -1 = all cores; 1 = sequential
 SEED="${{SEED:-}}"                      # default: config simulation.seed
 OUTPUT_ROOT="${{OUTPUT_ROOT:-}}"        # default: config simulation.output_root
 RUN_ID="${{RUN_ID:-}}"                  # empty → runner auto-timestamps the leaf dir
-# Algorithm selection — empty → per-experiment default
-# (sinr_cdf/scnr_cdf → all_algorithms; gamma/kappa/clutter sweeps →
-# cordis_vs_centralized; antennas_sweep → cordis_vs_benchmarks).  Set
-# to one of: cordis_only, cordis_vs_centralized, cordis_vs_benchmarks,
-# all_algorithms — to override.
+# Algorithm selection — empty → 'all_algorithms' (the default for
+# every CDF and sweep experiment since Stage 17; silently ignored by
+# convergence_trace and fronthaul_table).  Override with one of:
+# cordis_only, cordis_vs_centralized, cordis_vs_benchmarks,
+# all_algorithms.
 SPECS="${{SPECS:-}}"
 {sweep_options_block}
 
@@ -847,7 +847,11 @@ UCI_HPC3_ARRAY_COMMON = '''\
 # time with VAR=value sbatch ...):
 #
 #   EXP_NAME           experiment name (set by caller, required)
-#   N_TRIALS_TOTAL     total trials across the whole array (default 500)
+#   N_TRIALS_TOTAL     total trials across the whole array.
+#                      Default: read from cfg.simulation.n_trials of
+#                      the experiment config (configs/exp_<name>.json),
+#                      falling back to configs/default.json, then to
+#                      500 only if neither file exists.
 #   N_ARRAY_TASKS      total task count (must match --array=0-(N-1))
 #                      (default $SLURM_ARRAY_TASK_COUNT)
 #   BASE_SEED          base seed; per-task SEED = BASE_SEED + task_id
@@ -884,10 +888,27 @@ source "$CORDIS_VENV/bin/activate"
 # inside an array job; falls back to 1 if user invoked the script
 # outside SLURM for local debugging).
 : "${N_ARRAY_TASKS:=${SLURM_ARRAY_TASK_COUNT:-1}}"
-: "${N_TRIALS_TOTAL:=500}"
 : "${BASE_SEED:=42}"
 : "${ARRAY_TASK_ID:=${SLURM_ARRAY_TASK_ID:-0}}"
 : "${ARRAY_JOB_ID:=${SLURM_ARRAY_JOB_ID:-local}}"
+
+# N_TRIALS_TOTAL — the total Monte-Carlo count across the whole array
+# — is the same quantity as cfg.simulation.n_trials, so read it from
+# the config to keep the JSON file as the single source of truth.
+# Explicit env-var override still wins for ad-hoc submissions:
+#     N_TRIALS_TOTAL=2000 sbatch scripts/slurm/uci-hpc3/array/exp_<name>.array.sub
+if [ -z "${N_TRIALS_TOTAL:-}" ]; then
+    _CFG="configs/exp_${EXP_NAME}.json"
+    [ ! -f "$_CFG" ] && _CFG="configs/default.json"
+    if [ -f "$_CFG" ]; then
+        N_TRIALS_TOTAL=$(python3 -c \
+            "import json; cfg=json.load(open('$_CFG')); \
+             print(cfg.get('simulation',{}).get('n_trials',500))")
+    else
+        # Last-resort fallback if no config file is present at all.
+        N_TRIALS_TOTAL=500
+    fi
+fi
 
 # Ceiling division so the final task picks up the remainder when
 # N_TRIALS_TOTAL is not divisible by N_ARRAY_TASKS.  Last task may
