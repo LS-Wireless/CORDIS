@@ -25,9 +25,6 @@ fi
 # ─── OVERRIDES — edit these ──────────────────────────────────────────
 NAME="exp_snr_sweep"
 N_TRIALS=100
-# (SNR_DB inherits from _defaults.sh; the sweep itself overrides it
-# per-axis-value at runtime, so a baseline override here would only
-# clutter the diff against default.json.)
 
 # ─── Defaults for everything else ────────────────────────────────────
 source "$SCRIPT_DIR/_defaults.sh"

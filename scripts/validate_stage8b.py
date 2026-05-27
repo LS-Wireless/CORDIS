@@ -507,6 +507,19 @@ def _try_full_import():
     except Exception as e:
         raise _SkipTest(f"could not load {cfg_path}: {e}")
 
+    # Cap ADMM iteration budget for smoke tests.  Tests 14 and 15 are
+    # PIPELINE smoke tests (does run_gamma_sweep / run_sinr_cdf wire up
+    # and round-trip data correctly), not algorithm-convergence tests.
+    # Stage 22a bumped the default admm.n_max from 50 → 200, which
+    # pushed each trial from ~30s to ~120s+ on a laptop.  Capping at
+    # 10 keeps these tests honest about pipeline correctness while
+    # decoupling them from any future bump to algorithmic defaults.
+    try:
+        cfg.algorithm.admm.n_max = 10
+    except AttributeError:
+        # Older configs without algorithm.admm — leave alone.
+        pass
+
     runner_cfg = RunnerConfig(
         n_drops=2, n_realizations_per_drop=1,
         n_workers=1, verbose=0, base_seed=42,

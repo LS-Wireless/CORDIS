@@ -202,7 +202,6 @@ plt.close(fig)
         "default_n_real":  2,
         "recipe_overrides": [
             ("N_TRIALS", "100", ""),
-            ("SNR_DB",   "20.0", "Baseline; swept at runtime"),
         ],
         "sweep_cli": [
             ("--snr-values-db", "str", "''",
@@ -324,9 +323,7 @@ plt.close(fig)
         "kind": "trace",
         "default_n_drops": 1,    # ignored — uses fixed seed pair
         "default_n_real":  1,
-        "recipe_overrides": [
-            ("ADMM_N_MAX", "80",  "Headroom past convergence to see plateau"),
-        ],
+        "recipe_overrides": [],
         "sweep_cli": [
             ("--drop-seed",       "int", "42",
              "Topology drop seed for the single trial."),

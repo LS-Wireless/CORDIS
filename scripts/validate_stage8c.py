@@ -24,6 +24,7 @@ Exit code is 0 iff every test passes (skips do not fail the run).
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -338,6 +339,32 @@ def _have_full_install() -> bool:
         return False
 
 
+def _smoke_config(base_cfg_path: Path, out_dir: Path) -> Path:
+    """Build a config tuned for fast smoke-testing.
+
+    Loads the repo's default config, overrides only the knobs that
+    blow up wall-clock time for a pipeline smoke test (ADMM iteration
+    cap, mostly), and writes the modified config to ``out_dir``.
+
+    This decouples Tests 15/16 from any future bump to algorithmic
+    defaults — the smoke test exists to verify the runner+plot
+    pipeline produces output, not to test algorithm convergence, so
+    capping ``algorithm.admm.n_max`` to a small value is exactly right.
+
+    Stage 22a raised the default ``admm.n_max`` from 50 → 200, which
+    quadrupled the wall-clock of the end-to-end tests and pushed the
+    sweep test (2 trials × 2 γ × 9 algorithms ≈ 36 ADMM solves) past
+    its 300-second timeout.  This helper restores headroom by capping
+    iters at 10 — still enough for the pipeline to exercise every
+    code path without measuring algorithmic quality.
+    """
+    cfg = json.loads(base_cfg_path.read_text())
+    cfg.setdefault("algorithm", {}).setdefault("admm", {})["n_max"] = 10
+    smoke_path = out_dir / "smoke_config.json"
+    smoke_path.write_text(json.dumps(cfg, indent=2))
+    return smoke_path
+
+
 @_register("Test 15: end-to-end — exp_sinr_cdf.py + plot_sinr_cdf.py")
 def test_15_end_to_end_sinr_cdf():
     if not _have_full_install():
@@ -349,11 +376,12 @@ def test_15_end_to_end_sinr_cdf():
     with tempfile.TemporaryDirectory() as td:
         out_root = Path(td) / "results"
         fig_root = Path(td) / "figures"
+        smoke_cfg = _smoke_config(cfg_path, Path(td))
 
         # Run a tiny experiment.
         proc = subprocess.run(
             [sys.executable, "scripts/exp_sinr_cdf.py",
-             "--base-config", str(cfg_path),
+             "--base-config", str(smoke_cfg),
              "--n-drops", "2", "--n-realizations", "1",
              "--n-workers", "1",
              "--output-root", str(out_root)],
@@ -411,10 +439,11 @@ def test_16_end_to_end_gamma_sweep():
     with tempfile.TemporaryDirectory() as td:
         out_root = Path(td) / "results"
         fig_root = Path(td) / "figures"
+        smoke_cfg = _smoke_config(cfg_path, Path(td))
 
         proc = subprocess.run(
             [sys.executable, "scripts/exp_gamma_sweep.py",
-             "--base-config", str(cfg_path),
+             "--base-config", str(smoke_cfg),
              "--n-drops", "2", "--n-realizations", "1",
              "--n-workers", "1",
              "--gamma-values", "0,6",
