@@ -34,12 +34,12 @@ from _exp_common import (    # noqa: E402
 def main() -> None:
     parser = build_base_parser("convergence_trace")
     add_drops_args(parser)
-    parser.add_argument("--drop-seed", type=int, default=42,
-                        help='Topology drop seed for the single trial.')
-    parser.add_argument("--realization-seed", type=int, default=43,
-                        help='Channel realisation seed for the single trial.')
-    parser.add_argument("--n-admm-max", type=int, default=80,
-                        help='Cap on ADMM iterations.')
+    parser.add_argument("--drop-seed", type=int, default=None,
+                        help='Topology drop seed for the single trial. Empty → use registry default.')
+    parser.add_argument("--realization-seed", type=int, default=None,
+                        help='Channel realisation seed for the single trial. Empty → use registry default.')
+    parser.add_argument("--n-admm-max", type=int, default=None,
+                        help='Cap on ADMM iterations. Empty → use registry default (set in cordis/experiments/registry.py).')
     args = parser.parse_args()
 
     extra_kwargs = {

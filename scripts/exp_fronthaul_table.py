@@ -34,8 +34,8 @@ from _exp_common import (    # noqa: E402
 def main() -> None:
     parser = build_base_parser("fronthaul_table")
     add_sweep_args(parser)
-    parser.add_argument("--n-admm-drops", type=int, default=20,
-                        help='Drops used to estimate average ADMM iteration count.')
+    parser.add_argument("--n-admm-drops", type=int, default=None,
+                        help='Drops used to estimate average ADMM iteration count. Empty → use registry default.')
     args = parser.parse_args()
 
     extra_kwargs = {
