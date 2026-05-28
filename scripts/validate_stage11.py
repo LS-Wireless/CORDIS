@@ -50,7 +50,8 @@ GENERIC_DIR = REPO_ROOT / "scripts" / "slurm"
 EXPERIMENTS = [
     "sinr_cdf", "scnr_cdf",
     "gamma_sweep", "kappa_sweep", "clutter_cnr_sweep",
-    "snr_sweep", "n_ue_sweep", "n_ap_sweep", "antennas_sweep",
+    "snr_sweep", "csi_sweep",
+    "n_ue_sweep", "n_ap_sweep", "antennas_sweep",
     "convergence_trace", "fronthaul_table",
 ]
 
@@ -101,7 +102,7 @@ def test_02_config_exists():
     assert p.is_file(), f"missing {p}"
 
 
-@_register("Test  3: exactly one .sub per registered experiment (11 total)")
+@_register("Test  3: exactly one .sub per registered experiment (12 total)")
 def test_03_sub_count():
     sub_files = sorted(p.name for p in UCI_DIR.glob("exp_*.sub"))
     expected = sorted(f"exp_{n}.sub" for n in EXPERIMENTS)

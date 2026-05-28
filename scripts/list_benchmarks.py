@@ -88,6 +88,17 @@ def render_terminal(rows: List[Row]) -> str:
     lines.append("  CORDIS Benchmark Registry")
     lines.append("=" * 76)
     lines.append("")
+    lines.append("  NOTE on LR-MMSE benchmarks (paper revision):")
+    lines.append("    'lr_mmse_split' (LR-MMSE Phase-I + optimal P-Split PA) is")
+    lines.append("    numerically identical to CORDIS-Split, so the default benchmark")
+    lines.append("    surface (cordis_vs_benchmarks / all_algorithms) now uses")
+    lines.append("    'lr_mmse_fixed' (PSR ρ=0.5, no PA optimisation) as the LR-MMSE")
+    lines.append("    representative.  The 'lr_mmse_split' entry is retained for")
+    lines.append("    debugging / legacy access but is not in any default spec set.")
+    lines.append("    The two extra variants 'lr_mmse_fixed_p020' and")
+    lines.append("    'lr_mmse_fixed_p080' (ρ=0.2 and ρ=0.8) support the paper's")
+    lines.append("    'benefit of optimal PSR' figure via the 'psr_baselines' spec set.")
+    lines.append("")
     lines.append(
         f"  {'name':<{w_name}}  {'comm BF':<{w_bf}}  "
         f"{'PA mode':<{w_pa}}  {'ρ':<{w_rho}}  description"
@@ -129,6 +140,24 @@ def render_markdown(rows: List[Row]) -> str:
         "interface and return a `BenchmarkResult` for the simulation "
         "runner."
     )
+    lines.append("")
+    lines.append("> **Note on LR-MMSE benchmarks (paper revision).**")
+    lines.append(">")
+    lines.append("> `lr_mmse_split` (LR-MMSE Phase-I + optimal P-Split PA) is "
+                 "numerically identical to CORDIS-Split (which is precisely "
+                 "LR-MMSE BF + optimal PSR by construction).  To avoid "
+                 "duplicating the CORDIS-Split curve in figures, the default "
+                 "benchmark surface (`cordis_vs_benchmarks`, `all_algorithms`) "
+                 "now uses `lr_mmse_fixed` (PSR ρ=0.5, no PA optimisation) "
+                 "as the LR-MMSE representative.  The `lr_mmse_split` entry "
+                 "is retained for debugging / legacy access but is not in any "
+                 "default spec set.")
+    lines.append(">")
+    lines.append("> The two extra variants `lr_mmse_fixed_p020` (ρ=0.2, "
+                 "sensing-biased) and `lr_mmse_fixed_p080` (ρ=0.8, comm-biased) "
+                 "support the paper's *benefit of optimal PSR* figure via the "
+                 "`psr_baselines` spec set "
+                 "(`cordis.experiments.specs.psr_baselines`).")
     lines.append("")
     lines.append("## Quick usage")
     lines.append("")

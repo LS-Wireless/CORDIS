@@ -28,6 +28,7 @@ gamma_sweep          sweep      cordis_vs_centralized      γ [dB]
 clutter_cnr_sweep    sweep      cordis_vs_centralized      Clutter CNR [dB]
 kappa_sweep          sweep      cordis_vs_centralized      κ
 snr_sweep            sweep      all_algorithms             Pₘₐₓ/σ² [dB]
+csi_sweep            sweep      all_algorithms             Pilot power P_p/σ_n² [dB]
 n_ue_sweep           sweep      all_algorithms             N_UE
 n_ap_sweep           sweep      all_algorithms             N_AP
 antennas_sweep       sweep      cordis_vs_benchmarks       M (antennas/AP)
@@ -75,6 +76,7 @@ from cordis.experiments.specs import (
     cordis_only,
     cordis_vs_benchmarks,
     cordis_vs_centralized,
+    psr_baselines,
 )
 from cordis.experiments.sweeps import (
     SweepAxis,
@@ -98,6 +100,7 @@ _SPEC_SETS = {
     "cordis_vs_centralized": cordis_vs_centralized,  # + Centralized
     "cordis_vs_benchmarks":  cordis_vs_benchmarks,   # Split/ADMM + 4 benchmarks
     "all_algorithms":        all_algorithms,         # all 9 (default)
+    "psr_baselines":         psr_baselines,          # Split + LR-MMSE @ ρ∈{0.2,0.5,0.8}
 }
 
 
@@ -495,6 +498,56 @@ def run_clutter_cnr_sweep(
     )
 
 
+def run_csi_sweep(
+    cfg, runner_cfg,
+    *,
+    pilot_power_values_db: Optional[List[float]] = None,
+    n_drops: int = 20,
+    n_realizations: int = 2,
+    field_path: str = "channel.pilot_power_db",
+    spec_set: str = "all_algorithms",
+) -> ExperimentResult:
+    """Sweep uplink pilot power P_p/σ_n² [dB] to probe CSI sensitivity.
+
+    Lower pilot power → larger MMSE-estimation error in the channel
+    estimates ĥ_{a,u} → all algorithms degrade.  This experiment
+    quantifies how robust each algorithm is to imperfect CSI: the
+    centralised upper bound and CORDIS variants should both degrade
+    gracefully, while interference-naïve baselines (e.g. MRT) should
+    cliff-edge sooner.
+
+    Default range covers regimes where the estimation error dominates
+    (~80 dB), through "useful" CSI (~110 dB for ap_radius=650m, per
+    the channel.pilot_power_db docstring), up to near-perfect CSI
+    (~130 dB).  See cordis.channel.estimation for the MMSE estimator.
+    """
+    factory = _resolve_spec_set(spec_set)
+    if pilot_power_values_db is None:
+        pilot_power_values_db = [80.0, 90.0, 100.0, 110.0, 120.0, 130.0]
+    axis = SweepAxis(
+        name="pilot_power_db",
+        values=pilot_power_values_db,
+        display="Pilot power $P_p/\\sigma_n^2$ [dB]",
+        unit="dB",
+    )
+    _kw = {"n_ue": _get_n_ue(cfg)}
+    for _k, _v in _admm_kwargs_from_cfg(cfg).items():
+        _kw.setdefault(_k, _v)
+    specs = factory(**_kw)
+    rc = _override_runner(runner_cfg,
+                          n_drops=n_drops,
+                          n_realizations_per_drop=n_realizations)
+    results = sweep_config_field(cfg, specs, field_path, axis, rc)
+    return ExperimentResult(
+        name="csi_sweep", kind="sweep",
+        sweep_results=results, sweep_axis=axis,
+        metadata={"n_drops": n_drops, "n_realizations": n_realizations,
+                  "field_path": field_path,
+                  "spec_set": spec_set,
+                  "cfg_summary": _cfg_summary(cfg)},
+    )
+
+
 def run_n_ue_sweep(
     cfg, runner_cfg,
     *,
@@ -843,6 +896,7 @@ REGISTRY: Dict[str, Callable[..., ExperimentResult]] = {
     # Config-field sweeps
     "snr_sweep":         run_snr_sweep,
     "clutter_cnr_sweep": run_clutter_cnr_sweep,
+    "csi_sweep":         run_csi_sweep,
     "n_ue_sweep":        run_n_ue_sweep,
     "n_ap_sweep":        run_n_ap_sweep,
     "antennas_sweep":    run_antennas_sweep,
@@ -875,6 +929,7 @@ __all__ = [
     # Direct exports of every run_* (handy for IDE auto-complete)
     "run_sinr_cdf", "run_scnr_cdf",
     "run_gamma_sweep", "run_kappa_sweep", "run_clutter_cnr_sweep",
+    "run_csi_sweep",
     "run_snr_sweep", "run_n_ue_sweep", "run_n_ap_sweep",
     "run_antennas_sweep",
     "run_convergence_trace", "run_fronthaul_table",

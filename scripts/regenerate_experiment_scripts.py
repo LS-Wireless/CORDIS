@@ -224,6 +224,38 @@ plt.close(fig)
 ''',
     },
 
+    "csi_sweep": {
+        "summary": "min-SINR & sum-SCNR vs uplink pilot power P_p/σ_n² [dB] (CSI estimation error).",
+        "kind": "sweep",
+        "default_n_drops": 20,
+        "default_n_real":  2,
+        "recipe_overrides": [
+            ("N_TRIALS", "100", ""),
+        ],
+        "sweep_cli": [
+            ("--pilot-power-values-db", "str", "''",
+             "Comma- or space-separated pilot power values in dB "
+             "(P_p / σ_n²).  Lower values mean noisier channel "
+             "estimates; defaults to a broad sweep showing graceful "
+             "degradation through estimation-error-dominated regimes.  "
+             "Empty → use registry default."),
+        ],
+        "extra_run_kwargs": [
+            ("pilot_power_values_db",
+             "parse_value_list(args.pilot_power_values_db, float) or None"),
+        ],
+        "plot_call": '''\
+fig, _ = sweep_plot_pair(
+    result,
+    metric_top="min_sinr_db",  ylabel_top=r"min-SINR [dB]",
+    metric_bot="sum_scnr_db",  ylabel_bot=r"sum-SCNR [dB]",
+    xlabel=r"Pilot power $P_p/\\sigma_n^2$ [dB]",
+)
+save_paper_figure(fig, "csi_sweep", args, experiment_name="csi_sweep")
+plt.close(fig)
+''',
+    },
+
     "n_ue_sweep": {
         "summary": "min-SINR & sum-SCNR vs number of UEs.",
         "kind": "sweep",
@@ -854,8 +886,11 @@ UCI_HPC3_ARRAY_COMMON = '''\
 #                      500 only if neither file exists.
 #   N_ARRAY_TASKS      total task count (must match --array=0-(N-1))
 #                      (default $SLURM_ARRAY_TASK_COUNT)
-#   BASE_SEED          base seed; per-task SEED = BASE_SEED + task_id
-#                      (default 42)
+#   BASE_SEED          base seed; per-task SEED = BASE_SEED + task_id.
+#                      Default: read from cfg.simulation.seed of the
+#                      experiment config (configs/exp_<name>.json),
+#                      falling back to configs/default.json, then to
+#                      42 only if neither file exists.
 #   OUTPUT_ROOT        root under which exp_<name>/ trees are created.
 #                      Default 'results' produces the layout above.
 #
@@ -888,9 +923,25 @@ source "$CORDIS_VENV/bin/activate"
 # inside an array job; falls back to 1 if user invoked the script
 # outside SLURM for local debugging).
 : "${N_ARRAY_TASKS:=${SLURM_ARRAY_TASK_COUNT:-1}}"
-: "${BASE_SEED:=42}"
 : "${ARRAY_TASK_ID:=${SLURM_ARRAY_TASK_ID:-0}}"
 : "${ARRAY_JOB_ID:=${SLURM_ARRAY_JOB_ID:-local}}"
+
+# BASE_SEED — read from cfg.simulation.seed when not explicitly set, so
+# the JSON config remains the single source of truth.  Explicit env-var
+# override still wins for ad-hoc submissions:
+#     BASE_SEED=99 sbatch scripts/slurm/uci-hpc3/array/exp_<name>.array.sub
+if [ -z "${BASE_SEED:-}" ]; then
+    _CFG="configs/exp_${EXP_NAME}.json"
+    [ ! -f "$_CFG" ] && _CFG="configs/default.json"
+    if [ -f "$_CFG" ]; then
+        BASE_SEED=$(python3 -c \
+            "import json; cfg=json.load(open('$_CFG')); \
+             print(cfg.get('simulation',{}).get('seed',42))")
+    else
+        # Last-resort fallback if no config file is present at all.
+        BASE_SEED=42
+    fi
+fi
 
 # N_TRIALS_TOTAL — the total Monte-Carlo count across the whole array
 # — is the same quantity as cfg.simulation.n_trials, so read it from
@@ -1039,7 +1090,7 @@ echo "=========================================================="
 
 # Experiments that benefit from per-trial array splitting:
 ARRAY_ENABLED_EXPERIMENTS = {
-    "antennas_sweep", "clutter_cnr_sweep", "gamma_sweep",
+    "antennas_sweep", "clutter_cnr_sweep", "csi_sweep", "gamma_sweep",
     "kappa_sweep", "n_ap_sweep", "n_ue_sweep", "snr_sweep",
     "sinr_cdf", "scnr_cdf",
 }

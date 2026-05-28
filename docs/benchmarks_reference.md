@@ -5,6 +5,12 @@ Regenerate with: `./scripts/list_benchmarks.sh`
 
 Each benchmark pairs a communication beamformer (varied across rows) with a power-allocation strategy (Phase II of CORDIS-Split, or a uniform fixed ratio ρ). All benchmarks share the same interface and return a `BenchmarkResult` for the simulation runner.
 
+> **Note on LR-MMSE benchmarks (paper revision).**
+>
+> `lr_mmse_split` (LR-MMSE Phase-I + optimal P-Split PA) is numerically identical to CORDIS-Split (which is precisely LR-MMSE BF + optimal PSR by construction).  To avoid duplicating the CORDIS-Split curve in figures, the default benchmark surface (`cordis_vs_benchmarks`, `all_algorithms`) now uses `lr_mmse_fixed` (PSR ρ=0.5, no PA optimisation) as the LR-MMSE representative.  The `lr_mmse_split` entry is retained for debugging / legacy access but is not in any default spec set.
+>
+> The two extra variants `lr_mmse_fixed_p020` (ρ=0.2, sensing-biased) and `lr_mmse_fixed_p080` (ρ=0.8, comm-biased) support the paper's *benefit of optimal PSR* figure via the `psr_baselines` spec set (`cordis.experiments.specs.psr_baselines`).
+
 ## Quick usage
 
 ```python
@@ -46,6 +52,8 @@ All APs use a uniform ρ (no PA optimisation). These variants isolate the *value
 | Name | Comm BF | ρ | Description |
 |------|---------|---|-------------|
 | `lr_mmse_fixed` | `lr_mmse` | 0.50 | LR-MMSE + equal ρ=0.5  (no PA opt) |
+| `lr_mmse_fixed_p020` | `lr_mmse` | 0.20 | LR-MMSE + equal ρ=0.2  (sensing-biased) |
+| `lr_mmse_fixed_p080` | `lr_mmse` | 0.80 | LR-MMSE + equal ρ=0.8  (comm-biased) |
 | `mrt_fixed` | `mrt` | 0.50 | Local MRT + equal ρ=0.5 |
 | `rzf_fixed` | `rzf` | 0.50 | Local RZF + equal ρ=0.5 |
 

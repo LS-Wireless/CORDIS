@@ -1,10 +1,10 @@
 """
 cordis/algorithms/benchmarks.py
 ================================
-Stage 6d — Baseline algorithms paired with the centralized Phase II
+Stage 6d — Baseline algorithms paired with the centralised Phase II
 power-splitting allocator.
 
-The journal paper compares CORDIS-Split (LR-MMSE + P-Split optimized
+The journal paper compares CORDIS-Split (LR-MMSE + P-Split optimised
 power allocation) and CORDIS-ADMM (joint BF + PA via consensus) against
 simpler baselines.  Each baseline either
 
@@ -12,9 +12,9 @@ simpler baselines.  Each baseline either
       global-ZF, global-MRT) into the Stage 6a Phase I + Phase II
       pipeline, isolating the *choice of communication beamformer*, or
 
-  (b) skips the Phase II optimization entirely and uses a uniform
+  (b) skips the Phase II optimisation entirely and uses a uniform
       power-splitting ratio ρ = ρ_fixed across all APs, isolating the
-      *value of the PA optimization* itself.
+      *value of the PA optimisation* itself.
 
 Every benchmark returns a uniform :class:`BenchmarkResult` so the
 simulation runner (Stage 7) can enumerate baselines without
@@ -73,10 +73,16 @@ BENCHMARK_REGISTRY: Dict[str, Tuple[str, str, bool, Optional[float]]] = {
     "global_zf_split":  ("Global ZF + P-Split PA",                    "global_zf",  True,  None),
     "global_mrt_split": ("Global MRT + P-Split PA",                   "global_mrt", True,  None),
 
-    # ── PA fixed (uniform ρ = 0.5; no PA optimisation) ───────────────────
-    "lr_mmse_fixed":    ("LR-MMSE + equal ρ=0.5  (no PA opt)",         "lr_mmse",    False, 0.5),
-    "mrt_fixed":        ("Local MRT + equal ρ=0.5",                    "mrt",        False, 0.5),
-    "rzf_fixed":        ("Local RZF + equal ρ=0.5",                    "rzf",        False, 0.5),
+    # ── PA fixed (uniform ρ; no PA optimisation) ─────────────────────────
+    # The lr_mmse_fixed_* family doubles as the "CORDIS-Split without
+    # phase-II PSR optimisation" baseline used in the paper's PSR
+    # sensitivity figure (psr_baselines spec set).  Three ρ values
+    # span sensing-biased / balanced / comm-biased operating points.
+    "lr_mmse_fixed":      ("LR-MMSE + equal ρ=0.5  (no PA opt)",          "lr_mmse",    False, 0.5),
+    "lr_mmse_fixed_p020": ("LR-MMSE + equal ρ=0.2  (sensing-biased)",     "lr_mmse",    False, 0.2),
+    "lr_mmse_fixed_p080": ("LR-MMSE + equal ρ=0.8  (comm-biased)",        "lr_mmse",    False, 0.8),
+    "mrt_fixed":          ("Local MRT + equal ρ=0.5",                     "mrt",        False, 0.5),
+    "rzf_fixed":          ("Local RZF + equal ρ=0.5",                     "rzf",        False, 0.5),
 }
 
 
@@ -113,7 +119,7 @@ class BenchmarkResult:
         Communication beamformer key (see ``COMM_BF_METHODS``).
     pa_optimized : bool
         ``True`` if Phase II ran (ρ_a chosen by P-Split); ``False`` if a
-        uniform ρ was used (no PA optimization).
+        uniform ρ was used (no PA optimisation).
     psr : dict[int, float] or float
         Actual power-splitting ratio used.  Per-AP dict when
         ``pa_optimized`` is True; scalar float otherwise.

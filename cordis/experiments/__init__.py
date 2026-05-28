@@ -6,14 +6,14 @@ This package bundles five orthogonal pieces of the experiment workflow:
 * :mod:`cordis.experiments.io`       — output-path conventions and the
   ``exp_`` prefix (Stage 8a).
 * :mod:`cordis.experiments.specs`    — canonical algorithm-spec
-  builders and four spec-set factories that compose them.
+  builders and five spec-set factories that compose them.
 * :mod:`cordis.experiments.sweeps`   — :class:`SweepAxis` plus two
   sweep helpers (vary a config field, vary a spec-factory kwarg).
 * :mod:`cordis.experiments.result`   — :class:`ExperimentResult` with
   uniform save/load across four output kinds (single / sweep / trace
   / table).
 * :mod:`cordis.experiments.registry` — :data:`REGISTRY` mapping
-  experiment names to ``run_*`` callables; eleven experiments
+  experiment names to ``run_*`` callables; twelve experiments
   pre-registered, covering CDFs, parameter sweeps, ADMM convergence
   trajectories, and fronthaul-overhead tables.
 
@@ -51,16 +51,18 @@ from cordis.experiments.result import (
 )
 
 from cordis.experiments.specs import (
-    # defaults (aligned with configs/default.json)
-    DEFAULT_KAPPA,
-    DEFAULT_RHO_ADMM, DEFAULT_N_ADMM_MAX, DEFAULT_XI_SLACK,
+    # Algorithmic convergence tolerances (Stage-19d; not config-backed)
+    DEFAULT_EPS_PRI, DEFAULT_EPS_DUAL,
     # individual spec builders
     split_spec, admm_spec, centralized_spec,
     mrt_spec, zf_spec, rzf_spec, lrmmse_spec,
     global_mrt_spec, global_zf_spec,
+    # PSR-baseline variants (paper "benefit of optimal PSR" figure)
+    lrmmse_p020_spec, lrmmse_p080_spec, lrmmse_split_spec,
     # spec set factories
     cordis_only, cordis_vs_centralized,
     cordis_vs_benchmarks, all_algorithms,
+    psr_baselines,
 )
 
 from cordis.experiments.sweeps import (
@@ -77,6 +79,7 @@ from cordis.experiments.registry import (
     # convenience direct exports
     run_sinr_cdf, run_scnr_cdf,
     run_gamma_sweep, run_kappa_sweep, run_clutter_cnr_sweep,
+    run_csi_sweep,
     run_snr_sweep, run_n_ue_sweep, run_n_ap_sweep,
     run_antennas_sweep,
     run_convergence_trace, run_fronthaul_table,
@@ -88,22 +91,26 @@ __all__ = [
     "experiment_dir", "figure_dir", "latest_result", "log_dir",
     # result
     "ExperimentResult", "LoadedADMMResult", "VALID_KINDS",
-    # specs — defaults
-    "DEFAULT_KAPPA",
-    "DEFAULT_RHO_ADMM", "DEFAULT_N_ADMM_MAX", "DEFAULT_XI_SLACK",
+    # specs — algorithmic tolerances (only DEFAULT_* kept; others removed
+    # in favour of config-as-single-source-of-truth)
+    "DEFAULT_EPS_PRI", "DEFAULT_EPS_DUAL",
     # specs — builders
     "split_spec", "admm_spec", "centralized_spec",
     "mrt_spec", "zf_spec", "rzf_spec", "lrmmse_spec",
     "global_mrt_spec", "global_zf_spec",
+    # specs — PSR baseline variants
+    "lrmmse_p020_spec", "lrmmse_p080_spec", "lrmmse_split_spec",
     # specs — set factories
     "cordis_only", "cordis_vs_centralized",
     "cordis_vs_benchmarks", "all_algorithms",
+    "psr_baselines",
     # sweeps
     "SweepAxis", "sweep_config_field", "sweep_spec_factory",
     # registry
     "REGISTRY", "list_experiments", "get_experiment", "list_spec_sets",
     "run_sinr_cdf", "run_scnr_cdf",
     "run_gamma_sweep", "run_kappa_sweep", "run_clutter_cnr_sweep",
+    "run_csi_sweep",
     "run_snr_sweep", "run_n_ue_sweep", "run_n_ap_sweep",
     "run_antennas_sweep",
     "run_convergence_trace", "run_fronthaul_table",

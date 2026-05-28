@@ -73,9 +73,12 @@ def _have_cordis() -> bool:
         return False
 
 
-# Expected historical defaults per experiment.  These mirror the
-# pre-Stage-10 hardcoded factory calls; Stage 10 promotes them to
-# explicit parameter defaults on each run_* function.
+# Expected defaults per experiment.  Originally Stage 10 promoted the
+# pre-Stage-10 hardcoded factory calls (where gamma/kappa/clutter_cnr
+# sweeps used cordis_vs_centralized and antennas used
+# cordis_vs_benchmarks).  Stage 17 then unified ALL CDF/sweep
+# experiments on 'all_algorithms' for figure consistency — so this
+# table reflects post-Stage-17 truth.
 EXPECTED_DEFAULTS = {
     "run_sinr_cdf":          "all_algorithms",
     "run_scnr_cdf":          "all_algorithms",
@@ -83,6 +86,7 @@ EXPECTED_DEFAULTS = {
     "run_kappa_sweep":       "all_algorithms",
     "run_clutter_cnr_sweep": "all_algorithms",
     "run_snr_sweep":         "all_algorithms",
+    "run_csi_sweep":         "all_algorithms",
     "run_n_ue_sweep":        "all_algorithms",
     "run_n_ap_sweep":        "all_algorithms",
     "run_antennas_sweep":    "all_algorithms",
@@ -96,13 +100,14 @@ FIXED_ALGORITHM_FNS = {"run_convergence_trace", "run_fronthaul_table"}
 #  Tier 1 — Registry surface
 # ─────────────────────────────────────────────────────────────────────────────
 
-@_register("Test  1: _SPEC_SETS registered with 4 named factories")
+@_register("Test  1: _SPEC_SETS registered with 5 named factories")
 def test_01_spec_sets_dict():
     if not _have_cordis():
         raise _SkipTest("cordis not importable")
     from cordis.experiments.registry import _SPEC_SETS
     expected = {"cordis_only", "cordis_vs_centralized",
-                "cordis_vs_benchmarks", "all_algorithms"}
+                "cordis_vs_benchmarks", "all_algorithms",
+                "psr_baselines"}
     got = set(_SPEC_SETS)
     missing = expected - got
     extra = got - expected
@@ -144,10 +149,11 @@ def test_03_list_spec_sets():
     from cordis.experiments import list_spec_sets
     names = list_spec_sets()
     assert isinstance(names, list), f"list_spec_sets returned {type(names)}"
-    assert len(names) == 4, f"expected 4 named sets, got {len(names)}: {names}"
+    assert len(names) == 5, f"expected 5 named sets, got {len(names)}: {names}"
     # Order matters for CLI choices display — must be consistent.
     assert "all_algorithms" in names
     assert "cordis_only" in names
+    assert "psr_baselines" in names
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -237,7 +243,8 @@ def test_08_cli_choices():
     )
     assert specs_action.choices is not None, "--specs should restrict choices"
     expected = {"cordis_only", "cordis_vs_centralized",
-                "cordis_vs_benchmarks", "all_algorithms"}
+                "cordis_vs_benchmarks", "all_algorithms",
+                "psr_baselines"}
     got = set(specs_action.choices)
     assert got == expected, (
         f"--specs choices = {got}, expected {expected}"
@@ -278,9 +285,10 @@ def test_10_cli_help():
     assert "--specs" in proc.stdout, (
         f"--specs not in --help output; tail: {proc.stdout[-300:]}"
     )
-    # All four named sets must appear in the help text (via choices=).
+    # All five named sets must appear in the help text (via choices=).
     for name in ("cordis_only", "cordis_vs_centralized",
-                 "cordis_vs_benchmarks", "all_algorithms"):
+                 "cordis_vs_benchmarks", "all_algorithms",
+                 "psr_baselines"):
         assert name in proc.stdout, (
             f"named spec set {name!r} not listed in --help"
         )

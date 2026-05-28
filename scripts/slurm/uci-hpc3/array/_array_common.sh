@@ -37,8 +37,11 @@
 #                      500 only if neither file exists.
 #   N_ARRAY_TASKS      total task count (must match --array=0-(N-1))
 #                      (default $SLURM_ARRAY_TASK_COUNT)
-#   BASE_SEED          base seed; per-task SEED = BASE_SEED + task_id
-#                      (default 42)
+#   BASE_SEED          base seed; per-task SEED = BASE_SEED + task_id.
+#                      Default: read from cfg.simulation.seed of the
+#                      experiment config (configs/exp_<name>.json),
+#                      falling back to configs/default.json, then to
+#                      42 only if neither file exists.
 #   OUTPUT_ROOT        root under which exp_<name>/ trees are created.
 #                      Default 'results' produces the layout above.
 #
@@ -71,9 +74,23 @@ source "$CORDIS_VENV/bin/activate"
 # inside an array job; falls back to 1 if user invoked the script
 # outside SLURM for local debugging).
 : "${N_ARRAY_TASKS:=${SLURM_ARRAY_TASK_COUNT:-1}}"
-: "${BASE_SEED:=42}"
 : "${ARRAY_TASK_ID:=${SLURM_ARRAY_TASK_ID:-0}}"
 : "${ARRAY_JOB_ID:=${SLURM_ARRAY_JOB_ID:-local}}"
+
+# BASE_SEED — read from cfg.simulation.seed when not explicitly set, so
+# the JSON config remains the single source of truth.  Explicit env-var
+# override still wins for ad-hoc submissions:
+#     BASE_SEED=99 sbatch scripts/slurm/uci-hpc3/array/exp_<name>.array.sub
+if [ -z "${BASE_SEED:-}" ]; then
+    _CFG="configs/exp_${EXP_NAME}.json"
+    [ ! -f "$_CFG" ] && _CFG="configs/default.json"
+    if [ -f "$_CFG" ]; then
+        BASE_SEED=$(python3 -c             "import json; cfg=json.load(open('$_CFG'));              print(cfg.get('simulation',{}).get('seed',42))")
+    else
+        # Last-resort fallback if no config file is present at all.
+        BASE_SEED=42
+    fi
+fi
 
 # N_TRIALS_TOTAL — the total Monte-Carlo count across the whole array
 # — is the same quantity as cfg.simulation.n_trials, so read it from

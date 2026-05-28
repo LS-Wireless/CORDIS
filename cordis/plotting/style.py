@@ -191,16 +191,32 @@ def apply_paper_style(use_latex: bool = True) -> None:
 #: algorithm identically.
 #:
 #: Override or extend at runtime with :func:`register_algorithm_style`.
+#:
+#: Keys MUST match :data:`cordis.experiments.specs._DISPLAY` exactly,
+#: because :func:`style_for` does a direct dict lookup.  Raw strings
+#: with ``$\rho$`` math-mode are used for the LR-MMSE variants so the
+#: same key works under usetex=True (LaTeX renders ρ via mathmode) and
+#: usetex=False (mathtext fallback).
 ALGORITHM_STYLE: Dict[str, Dict[str, object]] = {
-    "CORDIS-Split":   dict(color="#1f77b4", marker="o", linestyle="-",  label="CORDIS-Split"),
-    "CORDIS-ADMM":    dict(color="#d62728", marker="s", linestyle="-",  label="CORDIS-ADMM"),
-    "Centralized":    dict(color="#2ca02c", marker="^", linestyle="--", label="Centralized"),
-    "MRT-Split":      dict(color="#7f7f7f", marker="x", linestyle=":",  label="MRT"),
-    "LR-MMSE-Split":  dict(color="#9467bd", marker="D", linestyle="-.", label="LR-MMSE"),
-    "RZF-Split":      dict(color="#8c564b", marker="v", linestyle="--", label="RZF"),
-    "ZF-Split":       dict(color="#e377c2", marker="P", linestyle=":",  label="ZF"),
-    "Global-MRT":     dict(color="#bcbd22", marker="<", linestyle="-",  label="Global MRT"),
-    "Global-ZF":      dict(color="#17becf", marker=">", linestyle="-",  label="Global ZF"),
+    "CORDIS-Split":             dict(color="#1f77b4", marker="o", linestyle="-",  label="CORDIS-Split"),
+    "CORDIS-ADMM":              dict(color="#d62728", marker="s", linestyle="-",  label="CORDIS-ADMM"),
+    "Centralized":              dict(color="#2ca02c", marker="^", linestyle="--", label="Centralized"),
+    "MRT-Split":                dict(color="#7f7f7f", marker="x", linestyle=":",  label="MRT"),
+    # The default LR-MMSE curve is now LR-MMSE Phase-I + fixed ρ=0.5 (NOT
+    # the legacy LR-MMSE + P-Split PA, which is identical to CORDIS-Split).
+    # The two variants below sit alongside it for the paper's PSR
+    # sensitivity figure (psr_baselines spec set).
+    r"LR-MMSE ($\rho$=0.5)":    dict(color="#9467bd", marker="D", linestyle="-.", label=r"LR-MMSE ($\rho$=0.5)"),
+    r"LR-MMSE ($\rho$=0.2)":    dict(color="#9467bd", marker="<", linestyle=":",  label=r"LR-MMSE ($\rho$=0.2)"),
+    r"LR-MMSE ($\rho$=0.8)":    dict(color="#9467bd", marker=">", linestyle="--", label=r"LR-MMSE ($\rho$=0.8)"),
+    # Legacy alias — LR-MMSE + optimal P-Split PA (numerically identical
+    # to CORDIS-Split).  Not in any default spec set; kept so notebooks
+    # that explicitly reference the old behaviour don't crash.
+    "LR-MMSE (P-Split PA)":     dict(color="#9467bd", marker="D", linestyle="-",  label="LR-MMSE (P-Split PA)"),
+    "RZF-Split":                dict(color="#8c564b", marker="v", linestyle="--", label="RZF"),
+    "ZF-Split":                 dict(color="#e377c2", marker="P", linestyle=":",  label="ZF"),
+    "Global-MRT":               dict(color="#bcbd22", marker="<", linestyle="-",  label="Global MRT"),
+    "Global-ZF":                dict(color="#17becf", marker=">", linestyle="-",  label="Global ZF"),
 }
 
 #: Greyscale palette used for unknown algorithms.  Indexed deterministically

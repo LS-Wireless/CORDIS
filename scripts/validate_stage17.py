@@ -113,18 +113,18 @@ def test_01_uniform_defaults():
     )
 
 
-@_register("Test  2: file-level audit — exactly 9 'spec_set: str = \"all_algorithms\"' lines")
+@_register("Test  2: file-level audit — exactly 10 'spec_set: str = \"all_algorithms\"' lines")
 def test_02_count_in_registry_file():
     """Structural lock-in: the registry file should literally contain
-    nine ``spec_set: str = "all_algorithms"`` lines (one per trial-
+    ten ``spec_set: str = "all_algorithms"`` lines (one per trial-
     bearing experiment).  Catches any future regression that flips a
     default back to a narrower set."""
     src = (REPO_ROOT / "cordis" / "experiments" / "registry.py").read_text()
     matches = re.findall(
         r'spec_set:\s*str\s*=\s*"all_algorithms"', src
     )
-    assert len(matches) == 9, (
-        f"expected exactly 9 'spec_set: str = \"all_algorithms\"' lines "
+    assert len(matches) == 10, (
+        f"expected exactly 10 'spec_set: str = \"all_algorithms\"' lines "
         f"in registry.py (one per CDF/sweep experiment); found "
         f"{len(matches)}"
     )

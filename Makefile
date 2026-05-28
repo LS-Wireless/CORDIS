@@ -29,7 +29,7 @@ export PYTHONPATH := $(CURDIR):$(PYTHONPATH)
 # ─── Experiments ─────────────────────────────────────────────────────────────
 EXPERIMENTS := \
     sinr_cdf scnr_cdf \
-    gamma_sweep kappa_sweep clutter_cnr_sweep snr_sweep \
+    gamma_sweep kappa_sweep clutter_cnr_sweep snr_sweep csi_sweep \
     n_ue_sweep n_ap_sweep antennas_sweep \
     convergence_trace fronthaul_table
 

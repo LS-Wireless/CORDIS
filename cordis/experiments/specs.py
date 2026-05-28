@@ -11,22 +11,29 @@ all spec sets get consistent colors and markers across the paper.
 
 Spec builders (one per algorithm)
 ---------------------------------
-:func:`split_spec`       — CORDIS-Split            ``kind="cordis_split"``
-:func:`admm_spec`        — CORDIS-ADMM             ``kind="cordis_admm"``
-:func:`centralized_spec` — Centralized joint BF+PA ``kind="centralized"``
-:func:`mrt_spec`         — Local MRT + P-Split PA  ``benchmark_name="mrt_split"``
-:func:`zf_spec`          — Local ZF + P-Split PA   ``benchmark_name="zf_split"``
-:func:`rzf_spec`         — Local RZF + P-Split PA  ``benchmark_name="rzf_split"``
-:func:`lrmmse_spec`      — Local LR-MMSE + PA      ``benchmark_name="lr_mmse_split"``
-:func:`global_mrt_spec`  — Global MRT + P-Split PA ``benchmark_name="global_mrt_split"``
-:func:`global_zf_spec`   — Global ZF  + P-Split PA ``benchmark_name="global_zf_split"``
+:func:`split_spec`       — CORDIS-Split             ``kind="cordis_split"``
+:func:`admm_spec`        — CORDIS-ADMM              ``kind="cordis_admm"``
+:func:`centralized_spec` — Centralized joint BF+PA  ``kind="centralized"``
+:func:`mrt_spec`         — Local MRT + P-Split PA   ``benchmark_name="mrt_split"``
+:func:`zf_spec`          — Local ZF + P-Split PA    ``benchmark_name="zf_split"``
+:func:`rzf_spec`         — Local RZF + P-Split PA   ``benchmark_name="rzf_split"``
+:func:`lrmmse_spec`      — Local LR-MMSE + fixed ρ=0.5  ``benchmark_name="lr_mmse_fixed"``
+:func:`global_mrt_spec`  — Global MRT + P-Split PA  ``benchmark_name="global_mrt_split"``
+:func:`global_zf_spec`   — Global ZF  + P-Split PA  ``benchmark_name="global_zf_split"``
+
+PSR-baseline variants (paper "benefit of optimal PSR" figure)
+-------------------------------------------------------------
+:func:`lrmmse_p020_spec` — LR-MMSE + ρ=0.2  ``benchmark_name="lr_mmse_fixed_p020"``
+:func:`lrmmse_p080_spec` — LR-MMSE + ρ=0.8  ``benchmark_name="lr_mmse_fixed_p080"``
+:func:`lrmmse_split_spec`— LR-MMSE + P-Split PA (≡ CORDIS-Split; legacy alias)
 
 Spec set factories (composition)
 --------------------------------
 :func:`cordis_only`           — 2 specs
 :func:`cordis_vs_centralized` — 3 specs
-:func:`cordis_vs_benchmarks`  — 6 specs (+ MRT/ZF/RZF/LR-MMSE)
+:func:`cordis_vs_benchmarks`  — 6 specs (+ MRT/ZF/RZF/LR-MMSE@ρ=0.5)
 :func:`all_algorithms`        — 9 specs (+ Global-MRT/Global-ZF)
+:func:`psr_baselines`         — 4 specs (CORDIS-Split + LR-MMSE@{ρ=0.2,0.5,0.8})
 
 API match with the real algorithm stack
 ---------------------------------------
@@ -49,12 +56,19 @@ API match with the real algorithm stack
   take ``n_ue`` and broadcast a scalar to a vector via
   :func:`numpy.full`.
 
-* Stage-7 dispatcher gaps closed by these specs:
-    - ``admm_spec`` explicitly forwards ``kappa`` (function default
-      0.0 overrides the cfg-level 1.0 if not passed; the dispatcher
-      never reads cfg.algorithm.admm.kappa).
-    - ``admm_spec`` also forwards ``rho_admm`` and ``n_admm_max``
-      so cfg values propagate.
+* Config as single source of truth (paper revision).  Tuning knobs
+  with a counterpart in ``cfg.algorithm.*`` default to ``None`` here:
+  ``gamma_u_db``, ``kappa``, ``rho_admm``, ``n_admm_max``, ``xi_slack``.
+  The corresponding spec.params entry is only emitted if the caller
+  explicitly passes a value.  Every ``run_*`` function in
+  ``cordis.experiments.registry`` calls ``_admm_kwargs_from_cfg(cfg)``
+  to extract these from cfg and forward them, so user config takes
+  effect — but the JSON config remains the only place the value lives.
+
+* Convergence tolerances ``eps_pri`` / ``eps_dual`` are kept as
+  module-level defaults (``DEFAULT_EPS_PRI=1.0``, ``DEFAULT_EPS_DUAL=1.0``;
+  Stage-19d).  They have no useful per-experiment override; keeping
+  them as defaults avoids forcing every caller to thread them.
 
 * The following knobs are deliberately NOT placed in spec.params
   even though the dispatcher would forward them:
@@ -88,25 +102,45 @@ _BENCHMARK_NAME: Dict[str, str] = {
     "mrt":          "mrt_split",
     "zf":           "zf_split",
     "rzf":          "rzf_split",
-    "lrmmse":       "lr_mmse_split",
+    # ``lrmmse`` is the default benchmark exposed in cordis_vs_benchmarks /
+    # all_algorithms.  Before the paper revision it pointed at
+    # ``lr_mmse_split`` (LR-MMSE Phase-I + optimal P-Split Phase-II PA),
+    # which is bit-for-bit identical to CORDIS-Split — so including it
+    # alongside CORDIS-Split produced overlapping curves.  It now points
+    # at the fixed-ρ=0.5 variant, which is a meaningful baseline (no PA
+    # optimisation) for the LR-MMSE + fixed-PSR family.
+    "lrmmse":       "lr_mmse_fixed",
     "global_mrt":   "global_mrt_split",
     "global_zf":    "global_zf_split",
-    # PA-fixed variants — available but not in the default spec sets.
-    "mrt_fixed":    "mrt_fixed",
-    "rzf_fixed":    "rzf_fixed",
-    "lrmmse_fixed": "lr_mmse_fixed",
+    # PA-fixed variants (for the psr_baselines spec set used by the
+    # paper's "benefit of optimal PSR" figure).
+    "mrt_fixed":      "mrt_fixed",
+    "rzf_fixed":      "rzf_fixed",
+    "lrmmse_p020":    "lr_mmse_fixed_p020",   # sensing-biased
+    "lrmmse_p080":    "lr_mmse_fixed_p080",   # comm-biased
+    # Legacy alias: explicit access to the LR-MMSE + optimal P-Split PA
+    # path (= CORDIS-Split numerically).  Not in any default spec set;
+    # exposed so older notebooks / debugging scripts can reach it.
+    "lrmmse_split":   "lr_mmse_split",
 }
 
 # ── Display names matching cordis.plotting.style.ALGORITHM_STYLE keys ─
+# LaTeX-mode-safe: ρ is rendered via mathmode "$\\rho$" so the same
+# string works under usetex=True (paper figures), usetex=False
+# (mathtext fallback), AND in plain-terminal output via list_benchmarks
+# (which just prints the literal string).
 
 _DISPLAY: Dict[str, str] = {
     "split":         "CORDIS-Split",
     "admm":          "CORDIS-ADMM",
     "centralized":   "Centralized",
-    "mrt":           "MRT-Split",        # local MRT + P-Split PA
-    "zf":            "ZF-Split",         # local ZF  + P-Split PA
-    "rzf":           "RZF-Split",        # local RZF + P-Split PA
-    "lrmmse":        "LR-MMSE-Split",    # local LR-MMSE + P-Split PA
+    "mrt":           "MRT-Split",                       # local MRT + P-Split PA
+    "zf":            "ZF-Split",                        # local ZF  + P-Split PA
+    "rzf":           "RZF-Split",                       # local RZF + P-Split PA
+    "lrmmse":        r"LR-MMSE ($\rho$=0.5)",           # fixed PSR (new default)
+    "lrmmse_p020":   r"LR-MMSE ($\rho$=0.2)",           # sensing-biased
+    "lrmmse_p080":   r"LR-MMSE ($\rho$=0.8)",           # comm-biased
+    "lrmmse_split":  "LR-MMSE (P-Split PA)",            # legacy alias (≡ CORDIS-Split)
     "global_mrt":    "Global-MRT",
     "global_zf":     "Global-ZF",
 }
@@ -117,18 +151,26 @@ _DISPLAY: Dict[str, str] = {
 #  built with no overrides matches what cfg promises.
 # ─────────────────────────────────────────────────────────────────────
 
-DEFAULT_KAPPA       = 1.0     # matches cfg.algorithm.admm.kappa
-DEFAULT_RHO_ADMM    = 1.0     # matches cfg.algorithm.admm.rho
-DEFAULT_N_ADMM_MAX  = 50      # matches cfg.algorithm.admm.n_max
-DEFAULT_XI_SLACK    = 1e4     # matches cfg.algorithm.admm.xi_slack
+# ─────────────────────────────────────────────────────────────────────
+#  Sentinel-default policy (paper revision)
+#
+#  ADMM tuning knobs that have a counterpart in ``cfg.algorithm.admm.*``
+#  default to None here.  ``None`` means "let the algorithm read the
+#  value from cfg" — the spec.params dict is built conditionally via
+#  :func:`_admm_params`, so omitted knobs aren't injected.  This keeps
+#  the JSON config the single source of truth and prevents the
+#  out-of-sync-defaults pitfall where bumping cfg.algorithm.admm.n_max
+#  silently has no effect (the old DEFAULT_N_ADMM_MAX=50 overrode it).
+#
+#  Convergence tolerances (eps_pri / eps_dual) are kept as
+#  algorithmic constants rather than config knobs because they're set
+#  numerically large (= 1.0) per Stage-19d, well past the practical
+#  convergence threshold — keeping them as module-level defaults
+#  avoids forcing every caller to thread them through.
+# ─────────────────────────────────────────────────────────────────────
+
 DEFAULT_EPS_PRI     = 1.0     # matches cfg.algorithm.admm.eps_pri  (was 1e-3 in Stage-19b)
 DEFAULT_EPS_DUAL    = 1.0     # matches cfg.algorithm.admm.eps_dual (was 1e-3 in Stage-19b)
-
-# Sentinel used by spec builders.  ``gamma_u_db=None`` means "use the
-# value from cfg.algorithm.gamma_db at solver invocation time" — i.e.
-# don't put a gamma_u_db entry in spec.params.  Pass a number to
-# override.  See cordis/algorithms/{joint_opt,centralized}.py for the
-# fallback branch.
 
 
 def _gamma_vec(gamma_u_db: float, n_ue: int) -> np.ndarray:
@@ -148,6 +190,32 @@ def _gamma_params(gamma_u_db: Optional[float], n_ue: int) -> dict:
     if gamma_u_db is None:
         return {}
     return {"gamma_u_db": _gamma_vec(gamma_u_db, n_ue)}
+
+
+def _admm_params(
+    *,
+    kappa:      Optional[float] = None,
+    rho_admm:   Optional[float] = None,
+    n_admm_max: Optional[int]   = None,
+    xi_slack:   Optional[float] = None,
+) -> dict:
+    """Conditionally pack ADMM tuning knobs into spec.params.
+
+    Each knob is included only if the caller explicitly passed a value
+    (i.e. not ``None``).  ``run_*`` functions in ``registry.py`` call
+    ``_admm_kwargs_from_cfg(cfg)`` to extract these from
+    ``cfg.algorithm.admm.*`` and then forward them as kwargs — so under
+    normal use the cfg values DO end up in spec.params and the
+    algorithm receives them.  When called directly with no kwargs
+    (e.g. ``admm_spec(n_ue=4)``), the spec carries no ADMM tuning
+    keys and the algorithm reads cfg in its dispatcher.
+    """
+    out: dict = {}
+    if kappa is not None:      out["kappa"]      = float(kappa)
+    if rho_admm is not None:   out["rho_admm"]   = float(rho_admm)
+    if n_admm_max is not None: out["n_admm_max"] = int(n_admm_max)
+    if xi_slack is not None:   out["xi_slack"]   = float(xi_slack)
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -180,44 +248,46 @@ def split_spec(
 
 def admm_spec(
     *,
-    n_ue: int = 1,
+    n_ue:       int             = 1,
     gamma_u_db: Optional[float] = None,
-    kappa:      float = DEFAULT_KAPPA,
-    rho_admm:   float = DEFAULT_RHO_ADMM,
-    n_admm_max: int   = DEFAULT_N_ADMM_MAX,
-    eps_pri:    float = DEFAULT_EPS_PRI,
-    eps_dual:   float = DEFAULT_EPS_DUAL,
-    xi_slack:   float = DEFAULT_XI_SLACK,
+    kappa:      Optional[float] = None,
+    rho_admm:   Optional[float] = None,
+    n_admm_max: Optional[int]   = None,
+    eps_pri:    float           = DEFAULT_EPS_PRI,
+    eps_dual:   float           = DEFAULT_EPS_DUAL,
+    xi_slack:   Optional[float] = None,
     **ignored,
 ) -> AlgorithmSpec:
     """CORDIS-ADMM (Algorithm 2): decentralised consensus-ADMM.
 
-    Note
-    ----
-    ``kappa``, ``rho_admm``, ``n_admm_max``, ``eps_pri``, ``eps_dual``
-    and ``xi_slack`` are placed explicitly in spec.params because the
-    Stage-7 dispatcher does NOT read these from ``cfg.algorithm.admm.*``.
-    Without them, ``solve_cordis_admm`` would silently fall back to its
-    function-level defaults (Stage 19 originally caught this for
-    kappa/rho_admm/n_admm_max; Stage 19b extends to eps_pri/eps_dual/
-    xi_slack on the same audit).
+    Notes
+    -----
+    ``eps_pri``/``eps_dual`` are algorithmic convergence tolerances kept
+    as module-level defaults (Stage-19d bumped them from 1e-3 to 1.0,
+    well past the practical convergence threshold).  They're always
+    placed in spec.params so the algorithm sees the same value
+    regardless of caller.
 
-    The ``_admm_kwargs_from_cfg(cfg)`` helper in
-    ``cordis/experiments/registry.py`` extracts these from
-    ``cfg.algorithm.admm.*`` for every ``run_*`` function so user
-    config takes effect.
+    ``kappa``, ``rho_admm``, ``n_admm_max``, and ``xi_slack`` default
+    to ``None`` and are only added to spec.params if the caller passes
+    an explicit value (the ``_admm_params`` sentinel pattern).  Under
+    normal use, :func:`_admm_kwargs_from_cfg` in
+    ``cordis/experiments/registry.py`` extracts them from
+    ``cfg.algorithm.admm.*`` for every ``run_*`` function, so user
+    config takes effect — but the JSON config remains the single
+    source of truth (no shadow defaults here).
     """
     return AlgorithmSpec(
         name=_DISPLAY["admm"],
         kind="cordis_admm",
         params={
             **_gamma_params(gamma_u_db, n_ue),
-            "kappa":       float(kappa),
-            "rho_admm":    float(rho_admm),
-            "n_admm_max":  int(n_admm_max),
-            "eps_pri":     float(eps_pri),
-            "eps_dual":    float(eps_dual),
-            "xi_slack":    float(xi_slack),
+            **_admm_params(
+                kappa=kappa, rho_admm=rho_admm,
+                n_admm_max=n_admm_max, xi_slack=xi_slack,
+            ),
+            "eps_pri":  float(eps_pri),
+            "eps_dual": float(eps_dual),
             # slack_tol / warm_start_from_split deliberately NOT included
             # — slack_tol has no cfg counterpart; warm_start_from_split is
             # a dead config field (algorithm always warm-starts internally).
@@ -275,6 +345,18 @@ def lrmmse_spec(**kw)     -> AlgorithmSpec: return _benchmark_spec("lrmmse",    
 def global_mrt_spec(**kw) -> AlgorithmSpec: return _benchmark_spec("global_mrt", **kw)
 def global_zf_spec(**kw)  -> AlgorithmSpec: return _benchmark_spec("global_zf",  **kw)
 
+# ── PSR-baseline variants ────────────────────────────────────────────
+# These three lr_mmse_* specs share the same Phase-I (LR-MMSE BF) but
+# differ only in the (uniform) fixed power-splitting ratio ρ.  Used
+# together with split_spec to demonstrate the benefit of CORDIS-Split's
+# Phase-II PSR optimisation: any fixed ρ choice is dominated by the
+# optimised allocation.
+def lrmmse_p020_spec(**kw)  -> AlgorithmSpec: return _benchmark_spec("lrmmse_p020", **kw)
+def lrmmse_p080_spec(**kw)  -> AlgorithmSpec: return _benchmark_spec("lrmmse_p080", **kw)
+# Legacy alias — LR-MMSE + optimal P-Split PA (numerically ≡ CORDIS-Split).
+# Kept for explicit access; not in any default spec set.
+def lrmmse_split_spec(**kw) -> AlgorithmSpec: return _benchmark_spec("lrmmse_split", **kw)
+
 
 # ─────────────────────────────────────────────────────────────────────
 #  Spec set factories
@@ -295,10 +377,15 @@ def cordis_vs_centralized(**kw) -> List[AlgorithmSpec]:
 
 
 def cordis_vs_benchmarks(**kw) -> List[AlgorithmSpec]:
-    """6 specs: + 4 local-BF + optimised-PA benchmarks (MRT/ZF/RZF/LR-MMSE).
+    """6 specs: + 4 local-BF benchmarks (MRT/ZF/RZF/LR-MMSE).
 
     Useful for figures showing that CORDIS outperforms classical
-    local-BF + PA approaches at the same operating point.
+    local-BF approaches at the same operating point.
+
+    Note on the LR-MMSE entry: this is LR-MMSE Phase-I BF + fixed
+    ρ=0.5 (no PA optimisation), not the legacy LR-MMSE + P-Split PA
+    which is numerically identical to CORDIS-Split.  See
+    ``cordis.algorithms.benchmarks.BENCHMARK_REGISTRY``.
     """
     return [
         split_spec(**kw),
@@ -328,18 +415,45 @@ def all_algorithms(**kw) -> List[AlgorithmSpec]:
     ]
 
 
+def psr_baselines(**kw) -> List[AlgorithmSpec]:
+    """4 specs: CORDIS-Split + 3 LR-MMSE fixed-ρ variants.
+
+    Designed for the paper's "benefit of optimal PSR" figure.
+    Compares CORDIS-Split's Phase-II optimal power-splitting ratio
+    against three fixed-ρ baselines (sharing the same LR-MMSE Phase-I
+    BF):
+
+        - LR-MMSE (ρ=0.2): sensing-biased
+        - LR-MMSE (ρ=0.5): balanced (same as default lrmmse benchmark)
+        - LR-MMSE (ρ=0.8): comm-biased
+
+    The expected story: CORDIS-Split dominates every fixed-ρ point,
+    showing that the optimal ρ depends on the operating regime and
+    that Phase-II is non-trivially better than any single fixed choice.
+    """
+    return [
+        split_spec(**kw),
+        lrmmse_p020_spec(**kw),
+        lrmmse_spec(**kw),         # ρ=0.5 (default lr_mmse benchmark)
+        lrmmse_p080_spec(**kw),
+    ]
+
+
 __all__ = [
     # Display-name + benchmark-name lookup tables
     "_DISPLAY", "_BENCHMARK_NAME",
-    # Defaults (aligned with configs/default.json)
-    "DEFAULT_KAPPA",
-    "DEFAULT_RHO_ADMM", "DEFAULT_N_ADMM_MAX", "DEFAULT_XI_SLACK",
+    # Algorithmic convergence tolerances (Stage-19d; kept as module-level
+    # defaults because there's no useful per-experiment override of them)
+    "DEFAULT_EPS_PRI", "DEFAULT_EPS_DUAL",
     # Individual spec builders
     "split_spec", "admm_spec", "centralized_spec",
     "mrt_spec", "zf_spec", "rzf_spec", "lrmmse_spec",
     "global_mrt_spec", "global_zf_spec",
+    # PSR-baseline variants (paper "benefit of optimal PSR" figure)
+    "lrmmse_p020_spec", "lrmmse_p080_spec", "lrmmse_split_spec",
     # Spec set factories
     "cordis_only", "cordis_vs_centralized",
     "cordis_vs_benchmarks", "all_algorithms",
+    "psr_baselines",
 ]
 

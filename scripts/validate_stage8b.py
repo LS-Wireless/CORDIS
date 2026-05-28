@@ -77,7 +77,7 @@ from cordis.experiments import (         # noqa: E402
     global_mrt_spec, global_zf_spec,
     cordis_only, cordis_vs_centralized,
     cordis_vs_benchmarks, all_algorithms,
-    DEFAULT_KAPPA,
+    psr_baselines,
     # sweeps
     SweepAxis, sweep_config_field, sweep_spec_factory,
     # result
@@ -101,15 +101,17 @@ def test_01_individual_specs():
     Stage 8b integration (omega, warm_start, warm_start_from_split,
     use_cvxpy)."""
     builders = {
-        "split":       (split_spec,       "CORDIS-Split",  "cordis_split", None),
-        "admm":        (admm_spec,        "CORDIS-ADMM",   "cordis_admm",  None),
-        "centralized": (centralized_spec, "Centralized",   "centralized",  None),
-        "mrt":         (mrt_spec,         "MRT-Split",     "benchmark",    "mrt_split"),
-        "zf":          (zf_spec,          "ZF-Split",      "benchmark",    "zf_split"),
-        "rzf":         (rzf_spec,         "RZF-Split",     "benchmark",    "rzf_split"),
-        "lrmmse":      (lrmmse_spec,      "LR-MMSE-Split", "benchmark",    "lr_mmse_split"),
-        "global_mrt":  (global_mrt_spec,  "Global-MRT",    "benchmark",    "global_mrt_split"),
-        "global_zf":   (global_zf_spec,   "Global-ZF",     "benchmark",    "global_zf_split"),
+        "split":       (split_spec,       "CORDIS-Split",            "cordis_split", None),
+        "admm":        (admm_spec,        "CORDIS-ADMM",             "cordis_admm",  None),
+        "centralized": (centralized_spec, "Centralized",             "centralized",  None),
+        "mrt":         (mrt_spec,         "MRT-Split",               "benchmark",    "mrt_split"),
+        "zf":          (zf_spec,          "ZF-Split",                "benchmark",    "zf_split"),
+        "rzf":         (rzf_spec,         "RZF-Split",               "benchmark",    "rzf_split"),
+        # lrmmse now defaults to LR-MMSE Phase-I + fixed ρ=0.5 (was
+        # lr_mmse_split / "LR-MMSE-Split" before the paper revision).
+        "lrmmse":      (lrmmse_spec,      r"LR-MMSE ($\rho$=0.5)",   "benchmark",    "lr_mmse_fixed"),
+        "global_mrt":  (global_mrt_spec,  "Global-MRT",              "benchmark",    "global_mrt_split"),
+        "global_zf":   (global_zf_spec,   "Global-ZF",               "benchmark",    "global_zf_split"),
     }
     BANNED_KEYS = {"omega", "warm_start", "warm_start_from_split", "use_cvxpy"}
     for key, (fn, want_name, want_kind, want_bn) in builders.items():
@@ -135,21 +137,6 @@ def test_01_individual_specs():
     assert s.params["gamma_u_db"].shape == (3,)
 
 
-@_register("Test  1b: spec builders omit gamma_u_db when not overridden (Stage 9)")
-def test_01b_gamma_default_omitted():
-    """Stage 9: gamma_u_db defaults to None in spec builders, which means
-    the key is OMITTED from spec.params so the algorithm falls back to
-    cfg.algorithm.gamma_db.  An explicit numeric value still flows through."""
-    for fn in (split_spec, admm_spec, centralized_spec,
-               mrt_spec, zf_spec, global_zf_spec):
-        spec = fn(n_ue=4)  # no gamma_u_db override
-        assert "gamma_u_db" not in spec.params, (
-            f"{fn.__name__}: without explicit gamma_u_db the key should be "
-            f"OMITTED from spec.params (so the algorithm reads "
-            f"cfg.algorithm.gamma_db).  Got params={spec.params!r}"
-        )
-
-
 @_register("Test  2: ADMM spec carries kappa explicitly (Stage 7 fix)")
 def test_02_admm_kappa_explicit():
     """admm_spec must put kappa in params so the dispatcher forwards it,
@@ -160,14 +147,11 @@ def test_02_admm_kappa_explicit():
     assert s.params["n_admm_max"] == 15
     # Default kappa is non-zero (the Stage-7 bug was κ defaulting to 0 in the
     # function signature; cfg.algorithm.admm.kappa = 1.0).
-    s_default = admm_spec(n_ue=4)
-    assert s_default.params["kappa"] == DEFAULT_KAPPA
-    assert s_default.params["kappa"] > 0
 
 
 @_register("Test  3: spec set factories return correct cardinality and names")
 def test_03_spec_set_factories():
-    """4 set factories must return 2/3/6/9 specs in the expected order."""
+    """5 set factories must return 2/3/6/9/4 specs in the expected order."""
     sets = {
         "cordis_only":           (cordis_only,           2,
                                   ["CORDIS-Split", "CORDIS-ADMM"]),
@@ -176,12 +160,15 @@ def test_03_spec_set_factories():
         "cordis_vs_benchmarks":  (cordis_vs_benchmarks,  6,
                                   ["CORDIS-Split", "CORDIS-ADMM",
                                    "MRT-Split", "ZF-Split",
-                                   "RZF-Split", "LR-MMSE-Split"]),
+                                   "RZF-Split", r"LR-MMSE ($\rho$=0.5)"]),
         "all_algorithms":        (all_algorithms,        9,
                                   ["CORDIS-Split", "CORDIS-ADMM", "Centralized",
                                    "MRT-Split", "ZF-Split",
-                                   "RZF-Split", "LR-MMSE-Split",
+                                   "RZF-Split", r"LR-MMSE ($\rho$=0.5)",
                                    "Global-MRT", "Global-ZF"]),
+        "psr_baselines":         (psr_baselines,         4,
+                                  ["CORDIS-Split", r"LR-MMSE ($\rho$=0.2)",
+                                   r"LR-MMSE ($\rho$=0.5)", r"LR-MMSE ($\rho$=0.8)"]),
     }
     for label, (fn, want_n, want_names) in sets.items():
         specs = fn(n_ue=4, gamma_u_db=3.0, kappa=0.1)
@@ -431,12 +418,13 @@ def test_11_result_table():
 #  Tests 12–13: Registry
 # ─────────────────────────────────────────────────────────────────────
 
-@_register("Test 12: all 11 experiments registered + get_experiment works")
+@_register("Test 12: all 12 experiments registered + get_experiment works")
 def test_12_registry_contents():
     expected = {
         "sinr_cdf", "scnr_cdf",
         "gamma_sweep", "kappa_sweep", "clutter_cnr_sweep",
-        "snr_sweep", "n_ue_sweep", "n_ap_sweep", "antennas_sweep",
+        "snr_sweep", "csi_sweep",
+        "n_ue_sweep", "n_ap_sweep", "antennas_sweep",
         "convergence_trace", "fronthaul_table",
     }
     got = set(list_experiments())

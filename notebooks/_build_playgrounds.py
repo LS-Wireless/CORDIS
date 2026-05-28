@@ -343,7 +343,7 @@ def build_sweep_notebook() -> dict:
         code(
             "# ── The one knob: which sweep parameter ──",
             "exp_name = 'snr'              # snr / gamma / kappa / clutter_cnr",
-            "                              # / n_ue / n_ap / antennas",
+            "                              # / n_ue / n_ap / antennas / csi",
             "",
             "# Optional: load a specific run directory instead of the latest.",
             "# Set to a path like 'results/exp_snr_sweep/20260520_113500'",
@@ -1171,7 +1171,7 @@ def build_array_sweep_notebook() -> dict:
         code(
             "# ── The two knobs ──",
             "exp_name  = 'snr'               # snr / gamma / kappa / clutter_cnr",
-            "                                # / n_ue / n_ap / antennas",
+            "                                # / n_ue / n_ap / antennas / csi",
             "ARRAY_ID  = None                # e.g. '52671900'; None = most recent",
             "",
             "EXPERIMENT = f'{exp_name}_sweep'",

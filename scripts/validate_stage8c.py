@@ -41,11 +41,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # on sys.path, not the cwd).  Matches validate_stage8b.py.
 sys.path.insert(0, str(REPO_ROOT))
 
-# The eleven experiments Stage 8c covers, in registry order.
+# The twelve experiments Stage 8c covers, in registry order.
 EXPERIMENTS = [
     "sinr_cdf", "scnr_cdf",
     "gamma_sweep", "kappa_sweep", "clutter_cnr_sweep",
-    "snr_sweep", "n_ue_sweep", "n_ap_sweep", "antennas_sweep",
+    "snr_sweep", "csi_sweep",
+    "n_ue_sweep", "n_ap_sweep", "antennas_sweep",
     "convergence_trace", "fronthaul_table",
 ]
 
