@@ -343,6 +343,31 @@ class ADMMConfig:
     #       downstream evaluation.
     best_iter_criterion: str = "residual_norm"
 
+    # ── Adaptive ρ (Stage 22b) ────────────────────────────────────────────
+    # Boyd-Parikh-Chu (2011) §3.4.1 adaptive penalty parameter scheme.
+    # Rebalances primal vs dual residual by scaling rho_admm within
+    # [rho_min_factor, rho_max_factor].  Bounds and step size are
+    # deliberately conservative because the SCA-linearisation of the
+    # err penalty in P-Local loses validity outside a trust region
+    # around W^(n) — empirically, scaling rho_admm by ≥5× the input
+    # value destabilises the algorithm.  We cap at 3× and use τ=1.5
+    # to creep up slowly.
+    adaptive_rho: bool = True
+    rho_mu_balance: float = 10.0
+    rho_tau: float = 1.5
+    rho_max_factor: float = 3.0
+    rho_min_factor: float = 0.5
+    rho_adapt_warmup: int = 5
+    rho_adapt_interval: int = 3
+
+    # ── Patience-based early stopping (Stage 22b) ─────────────────────────
+    # Active only under best_iter_criterion="residual_norm".  Bails
+    # out when no new best iterate has been recorded for
+    # `early_stop_patience` consecutive iterations, after a warmup
+    # of `early_stop_min_iters`.  Set patience=0 to disable.
+    early_stop_patience: int = 15
+    early_stop_min_iters: int = 30
+
     # ── Solver ────────────────────────────────────────────────────────────
     solver: str = "CLARABEL"        # CVXPY solver: "CLARABEL" | "GUROBI" | "MOSEK"
 
@@ -1174,6 +1199,75 @@ PARAM_REGISTRY: Dict[str, Dict[str, str]] = {
                   "in non-converged trajectories).  See Stage 22a."),
         "unit":  "-",
         "range": "{residual_norm|min_sinr}",
+    },
+
+    "algorithm.admm.adaptive_rho": {
+        "help":  ("Enable Boyd-Parikh-Chu (2011) §3.4.1 adaptive ρ scheme. "
+                  "Rebalances primal vs dual residual by scaling rho_admm "
+                  "within [rho_min_factor, rho_max_factor]. Designed "
+                  "conservatively against SCA destabilisation (empirically: "
+                  "rho_admm scaled by ≥5× the input diverges). Stage 22b."),
+        "unit":  "-",
+        "range": "{true|false}",
+    },
+    "algorithm.admm.rho_mu_balance": {
+        "help":  ("Boyd's μ threshold for the relative-residual balance "
+                  "test in adaptive ρ.  Adapt only when "
+                  "(r_pri/ε_pri) > μ·(r_dual/ε_dual) (or vice-versa)."),
+        "unit":  "-",
+        "range": "> 1 (typical: 5–20; Boyd's default: 10)",
+    },
+    "algorithm.admm.rho_tau": {
+        "help":  ("Symmetric multiplicative step for adaptive ρ. "
+                  "τ=2.0 is Boyd's default; we use 1.5 because the "
+                  "SCA-linearised err penalty loses validity at large ρ "
+                  "and a gentler step preserves stability."),
+        "unit":  "-",
+        "range": "> 1 (typical: 1.25–2.0)",
+    },
+    "algorithm.admm.rho_max_factor": {
+        "help":  ("Upper bound on the adaptive ρ multiplier (factor × "
+                  "input rho_admm).  Default 3.0 — half the empirical "
+                  "instability threshold (~5×) of this SCA-based ADMM."),
+        "unit":  "-",
+        "range": "> 1.0 (typical: 2.0–5.0)",
+    },
+    "algorithm.admm.rho_min_factor": {
+        "help":  ("Lower bound on the adaptive ρ multiplier.  Default "
+                  "0.5 — protects against over-shrinking which would "
+                  "produce a near-zero penalty and lose all consensus."),
+        "unit":  "-",
+        "range": "(0, 1.0]  (typical: 0.25–0.75)",
+    },
+    "algorithm.admm.rho_adapt_warmup": {
+        "help":  ("Number of warmup iterations before adaptive ρ engages. "
+                  "Protects against adapting on transient residuals while "
+                  "the SCA gradient is still settling."),
+        "unit":  "iters",
+        "range": ">= 0 (typical: 3–10)",
+    },
+    "algorithm.admm.rho_adapt_interval": {
+        "help":  ("Minimum iterations between consecutive ρ changes — "
+                  "gives the algorithm time to respond before adjusting "
+                  "again.  Acts as cooldown / hysteresis."),
+        "unit":  "iters",
+        "range": ">= 1 (typical: 2–5)",
+    },
+    "algorithm.admm.early_stop_patience": {
+        "help":  ("Patience for early stop (in iterations).  Bails out "
+                  "of the ADMM loop if no new 'best iterate' has been "
+                  "recorded for this many consecutive iterations.  "
+                  "Active only under best_iter_criterion='residual_norm'. "
+                  "Set to 0 to disable."),
+        "unit":  "iters",
+        "range": ">= 0 (0 disables; typical: 10–20)",
+    },
+    "algorithm.admm.early_stop_min_iters": {
+        "help":  ("Warmup before patience-stop can fire.  Protects "
+                  "against stopping prematurely on transient improvement "
+                  "in the early iterations."),
+        "unit":  "iters",
+        "range": ">= 0 (typical: 20–50)",
     },
 
     # ── AlgorithmConfig (umbrella — shared by every algorithm) ───────────

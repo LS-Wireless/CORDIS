@@ -24,7 +24,7 @@ fi
 
 # ─── OVERRIDES — edit these ──────────────────────────────────────────
 NAME="exp_convergence_trace"
-# (no overrides — uses pure defaults)
+ADMM_EARLY_STOP_PATIENCE=0    # Full n_max trace — disable patience early-stop
 
 # ─── Defaults for everything else ────────────────────────────────────
 source "$SCRIPT_DIR/_defaults.sh"

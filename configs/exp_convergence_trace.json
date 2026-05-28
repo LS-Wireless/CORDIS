@@ -88,6 +88,15 @@
       "target_priority_equal": true,
       "warm_start_from_split": true,
       "best_iter_criterion": "residual_norm",
+      "adaptive_rho": true,
+      "rho_mu_balance": 10.0,
+      "rho_tau": 1.5,
+      "rho_max_factor": 3.0,
+      "rho_min_factor": 0.5,
+      "rho_adapt_warmup": 5,
+      "rho_adapt_interval": 3,
+      "early_stop_patience": 0,
+      "early_stop_min_iters": 30,
       "solver": "CLARABEL"
     },
     "split": {

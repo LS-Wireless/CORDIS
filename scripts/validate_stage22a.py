@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-scripts/validate_stage22.py
+scripts/validate_stage22a.py
 ============================
 
 Stage 22a — ADMM convergence: bumped iteration cap, residual-based
@@ -33,7 +33,7 @@ Tests verify each piece at three tiers:
 
 Run from the repo root::
 
-    python3 scripts/validate_stage22.py
+    python3 scripts/validate_stage22a.py
 """
 from __future__ import annotations
 

@@ -110,6 +110,28 @@ ADMM_XI_SLACK="${ADMM_XI_SLACK:-10000.0}"
 # SINR).  See ADMMConfig.best_iter_criterion docstring.
 ADMM_BEST_ITER_CRITERION="${ADMM_BEST_ITER_CRITERION:-residual_norm}"
 
+# ─── Algorithm — CORDIS-ADMM Stage 22b (adaptive ρ + patience stop) ──
+# Adaptive ρ (Boyd-Parikh-Chu 2011 §3.4.1).  Rebalances primal vs dual
+# residual by scaling rho within [rho_min_factor, rho_max_factor].
+# DELIBERATELY CONSERVATIVE: empirically rho scaled by ≥5× the input
+# value destabilises SCA, so the cap is 3× and the step τ=1.5 (gentler
+# than Boyd's 2.0).  Set ADMM_ADAPTIVE_RHO=false to fall back to the
+# fixed-ρ Stage 22a behaviour.
+ADMM_ADAPTIVE_RHO="${ADMM_ADAPTIVE_RHO:-true}"
+ADMM_RHO_MU_BALANCE="${ADMM_RHO_MU_BALANCE:-10.0}"  # Boyd's μ imbalance threshold
+ADMM_RHO_TAU="${ADMM_RHO_TAU:-1.5}"                 # multiplicative step (≤2 for stability)
+ADMM_RHO_MAX_FACTOR="${ADMM_RHO_MAX_FACTOR:-3.0}"   # upper cap (½ the ~5× instability point)
+ADMM_RHO_MIN_FACTOR="${ADMM_RHO_MIN_FACTOR:-0.5}"   # lower floor
+ADMM_RHO_ADAPT_WARMUP="${ADMM_RHO_ADAPT_WARMUP:-5}" # iters before adapting (SCA settle)
+ADMM_RHO_ADAPT_INTERVAL="${ADMM_RHO_ADAPT_INTERVAL:-3}"  # cooldown between ρ changes
+# Patience-based early stopping (active only under residual_norm
+# criterion).  Bails out when no new best-iterate is found for
+# ADMM_EARLY_STOP_PATIENCE consecutive iters, after a warmup of
+# ADMM_EARLY_STOP_MIN_ITERS.  Set ADMM_EARLY_STOP_PATIENCE=0 to disable
+# (e.g. for the convergence-trace experiment that needs full n_max runs).
+ADMM_EARLY_STOP_PATIENCE="${ADMM_EARLY_STOP_PATIENCE:-15}"
+ADMM_EARLY_STOP_MIN_ITERS="${ADMM_EARLY_STOP_MIN_ITERS:-30}"
+
 # ─── Simulation ──────────────────────────────────────────────────────
 # Trial count can be set in two ways:
 #   • N_TRIALS  → auto-decomposed into closest factor pair (drops × real)
@@ -179,6 +201,15 @@ SET_ARGS=(
     algorithm.admm.eps_dual="$ADMM_EPS_DUAL"
     algorithm.admm.xi_slack="$ADMM_XI_SLACK"
     algorithm.admm.best_iter_criterion="$ADMM_BEST_ITER_CRITERION"
+    algorithm.admm.adaptive_rho="$ADMM_ADAPTIVE_RHO"
+    algorithm.admm.rho_mu_balance="$ADMM_RHO_MU_BALANCE"
+    algorithm.admm.rho_tau="$ADMM_RHO_TAU"
+    algorithm.admm.rho_max_factor="$ADMM_RHO_MAX_FACTOR"
+    algorithm.admm.rho_min_factor="$ADMM_RHO_MIN_FACTOR"
+    algorithm.admm.rho_adapt_warmup="$ADMM_RHO_ADAPT_WARMUP"
+    algorithm.admm.rho_adapt_interval="$ADMM_RHO_ADAPT_INTERVAL"
+    algorithm.admm.early_stop_patience="$ADMM_EARLY_STOP_PATIENCE"
+    algorithm.admm.early_stop_min_iters="$ADMM_EARLY_STOP_MIN_ITERS"
     simulation.n_trials="$N_TRIALS"
     simulation.seed="$SEED"
     simulation.n_jobs="$N_JOBS"

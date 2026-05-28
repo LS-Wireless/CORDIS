@@ -55,7 +55,8 @@ Regenerate with: `./scripts/list_scripts.sh`
   validate_stage19.py                scripts/validate_stage19.py
   validate_stage20.py                scripts/validate_stage20.py
   validate_stage21.py                scripts/validate_stage21.py
-  validate_stage22.py                scripts/validate_stage22.py
+  validate_stage22a.py               scripts/validate_stage22a.py
+  validate_stage22b.py               scripts/validate_stage22b.py
   validate_stage6a.py                Stage 6a validation — CORDIS-Sp...
   validate_stage6b.py                Stage 6b validation — Centraliz...
   validate_stage6c.py                Stage 6c validation — CORDIS-AD...

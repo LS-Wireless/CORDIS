@@ -187,6 +187,8 @@ class ADMMResult:
     feasible:             bool        = True
     inner_failures:       int         = 0
     best_iter:            int         = 0
+    rho_history:          List[float] = field(default_factory=list)
+    early_stopped:        bool        = False
 
 
 # =============================================================================
@@ -868,9 +870,45 @@ def solve_cordis_admm(
     nu_sinr      = np.zeros(n_ue, dtype=np.float64)
     nu_sinr_max  = 1e8                                  # safety cap
 
+    # ── Adaptive ρ state (Stage 22b) ─────────────────────────────────────
+    # Boyd-Parikh-Chu (2011) §3.4.1 adaptive penalty parameter scheme.
+    # Uses the relative-residual variant because the dual residual in
+    # this code is computed with user-facing ``rho_admm`` rather than
+    # ``rho_effective``, so r_dual is systematically small vs r_pri —
+    # normalising by tolerances cancels that scaling skew.
+    #
+    # Stability bounds are tight: empirically, scaling rho_admm by ≥5×
+    # the input value destabilises SCA (the err-term tangent loses
+    # validity outside a trust region around W^(n)).  We cap at 3×
+    # (default) and use τ=1.5 (gentler than Boyd's 2.0) to creep up
+    # slowly.  Cooldown + warmup + instability detector provide
+    # further protection.
+    adaptive_rho       = bool(getattr(cfg.algorithm.admm, "adaptive_rho", True))
+    rho_tau            = float(getattr(cfg.algorithm.admm, "rho_tau", 1.5))
+    rho_mu_balance     = float(getattr(cfg.algorithm.admm, "rho_mu_balance", 10.0))
+    rho_max_factor     = float(getattr(cfg.algorithm.admm, "rho_max_factor", 3.0))
+    rho_min_factor     = float(getattr(cfg.algorithm.admm, "rho_min_factor", 0.5))
+    rho_adapt_warmup   = int  (getattr(cfg.algorithm.admm, "rho_adapt_warmup", 5))
+    rho_adapt_interval = int  (getattr(cfg.algorithm.admm, "rho_adapt_interval", 3))
+
+    rho_factor_current   = 1.0      # multiplier on top of input rho_admm
+    last_rho_adapt_iter  = -10**9   # any value < -rho_adapt_interval works
+    rho_history: List[float] = []
+
+    # ── Patience-based early stopping (Stage 22b) ────────────────────────
+    early_stop_patience   = int(getattr(cfg.algorithm.admm, "early_stop_patience", 15))
+    early_stop_min_iters  = int(getattr(cfg.algorithm.admm, "early_stop_min_iters", 30))
+    early_stopped = False
+
     if verbose:
         print(f"  [ADMM] rho={rho_admm}, kappa={kappa}, xi∈[{xi_floor:.1e}, "
               f"{xi_cap:.1e}], n_max={n_admm_max}, gamma_dB={lin2db(gamma_lin)}")
+        print(f"  [ADMM] adaptive_rho={adaptive_rho} (τ={rho_tau}, "
+              f"μ={rho_mu_balance}, range=[{rho_min_factor}, "
+              f"{rho_max_factor}]·rho_admm)")
+        if early_stop_patience > 0:
+            print(f"  [ADMM] early_stop: patience={early_stop_patience}, "
+                  f"min_iters={early_stop_min_iters}")
 
     # =====================================================================
     # ADMM main loop
@@ -1096,6 +1134,78 @@ def solve_cordis_admm(
             best_sinr  = sinr_vec.copy()
             best_slack = eps_new.copy()
 
+        # ── Adaptive ρ — Boyd §3.4.1 (Stage 22b) ─────────────────────────
+        # Use relative residuals (r/ε) for balance because the dual
+        # residual uses user-facing rho_admm (=1 by default) and is
+        # systematically small.  Normalising by tolerances cancels skew.
+        #
+        # Safeguards (any one disables the update for this iter):
+        #   1. Warmup (rho_adapt_warmup): don't adapt while SCA settles.
+        #   2. Cooldown (rho_adapt_interval): wait between changes.
+        #   3. Bounds [rho_min_factor, rho_max_factor]: cap at 3× of
+        #      input rho_admm (half the empirical instability threshold).
+        #   4. Instability detector: if r_pri grew >5 % iter-over-iter,
+        #      NEVER increase ρ — decrease instead (SCA trust-region
+        #      violation symptom).
+        if adaptive_rho and (n_iter + 1) >= rho_adapt_warmup:
+            iters_since_last_adapt = (n_iter + 1) - last_rho_adapt_iter
+            can_adapt = iters_since_last_adapt >= rho_adapt_interval
+
+            # Relative-residual balance test
+            r_pri_rel  = r_pri  / max(eps_pri,  1e-30)
+            r_dual_rel = r_dual / max(eps_dual, 1e-30)
+
+            # Instability: primal residual growing iter-over-iter
+            r_pri_growing = (
+                len(prim_hist) >= 2
+                and prim_hist[-2] > 0
+                and r_pri > 1.05 * prim_hist[-2]
+            )
+
+            new_factor = rho_factor_current
+            if can_adapt:
+                if r_pri_growing:
+                    # SCA trust region likely violated — back off only.
+                    if rho_factor_current > rho_min_factor + 1e-9:
+                        new_factor = max(
+                            rho_factor_current / rho_tau, rho_min_factor
+                        )
+                elif r_pri_rel > rho_mu_balance * r_dual_rel:
+                    # Primal-dominated → increase ρ
+                    new_factor = min(
+                        rho_factor_current * rho_tau, rho_max_factor
+                    )
+                elif r_dual_rel > rho_mu_balance * r_pri_rel:
+                    # Dual-dominated → decrease ρ
+                    new_factor = max(
+                        rho_factor_current / rho_tau, rho_min_factor
+                    )
+
+            if abs(new_factor - rho_factor_current) > 1e-9:
+                # Rescale scaled-form dual ν when ρ changes.  Scaled
+                # ADMM has u = λ/ρ; to hold λ constant when ρ → τρ,
+                # set u ← u/τ.  Formula: nu_rescale = ρ_old/ρ_new.
+                nu_rescale = rho_factor_current / new_factor
+                for u_ in range(n_ue):
+                    nu_cur[u_] = ConsensusVector(
+                        cds  = nu_cur[u_].cds  * nu_rescale,
+                        mui  = nu_cur[u_].mui  * nu_rescale,
+                        s2ci = nu_cur[u_].s2ci * nu_rescale,
+                        err  = nu_cur[u_].err  * nu_rescale,
+                    )
+                rho_factor_current  = new_factor
+                rho_effective       = rho_admm * rho_factor_current * auto_rho_factor
+                last_rho_adapt_iter = n_iter + 1
+                if verbose:
+                    print(f"  [ADMM] ρ-adapt iter {n_iter+1}: "
+                          f"factor={rho_factor_current:.3f}, "
+                          f"ρ_eff={rho_effective:.3e}, "
+                          f"r_pri/ε={r_pri_rel:.2f}, "
+                          f"r_dual/ε={r_dual_rel:.2f}, "
+                          f"r_pri_growing={r_pri_growing}")
+
+        rho_history.append(rho_factor_current)
+
         # ── Adaptive ξ — exterior penalty method, slack-driven ───────────
         # Grow ξ when the max SOC slack max_u ε_u persists above
         # ``slack_tol``; relax it only when the slack is comfortably
@@ -1144,6 +1254,30 @@ def solve_cordis_admm(
         nu_cur           = nu_new
         Sigma_tilde_cur  = Sigma_tilde_new
 
+        # ── Patience-based early stop (Stage 22b) ────────────────────────
+        # When the residual_norm best-iter criterion is in effect, the
+        # algorithm typically finds its lowest r_pri+r_dual iterate
+        # within ~100 outer iterations and then oscillates without
+        # further improvement.  Bail out when no new best iterate has
+        # been recorded for `early_stop_patience` consecutive iters,
+        # but only after `early_stop_min_iters` warmup and only if we
+        # already have a best iterate.  Set early_stop_patience=0 to
+        # disable.  No-op when best_iter_criterion="min_sinr".
+        if (
+            best_iter_criterion == "residual_norm"
+            and early_stop_patience > 0
+            and best_iter > 0
+            and (n_iter + 1) >= early_stop_min_iters
+        ):
+            iters_since_best = (n_iter + 1) - best_iter
+            if iters_since_best >= early_stop_patience:
+                if verbose:
+                    print(f"  [ADMM] early stop at iter {n_iter+1}: "
+                          f"no improvement for {iters_since_best} iters "
+                          f"(best at {best_iter})")
+                early_stopped = True
+                break
+
         # ── Convergence ──────────────────────────────────────────────────
         # Original criterion: consensus tight (r_pri, r_dual) and all
         # inner solves succeeded.  The ALM multipliers + adaptive ξ keep
@@ -1175,7 +1309,9 @@ def solve_cordis_admm(
                 solver=solver_nm,
                 feasible=any_inner_ok,
                 inner_failures=inner_failures,
-            best_iter=best_iter,
+                best_iter=best_iter,
+                rho_history=rho_history,
+                early_stopped=False,
             )
 
         if consec_fail >= MAX_CONSEC_FAIL:
@@ -1206,6 +1342,8 @@ def solve_cordis_admm(
             feasible=any_inner_ok,
             inner_failures=inner_failures,
             best_iter=best_iter,
+            rho_history=rho_history,
+            early_stopped=early_stopped,
         )
 
     return ADMMResult(
@@ -1222,6 +1360,8 @@ def solve_cordis_admm(
         feasible=any_inner_ok,
         inner_failures=inner_failures,
         best_iter=best_iter,
+        rho_history=rho_history,
+        early_stopped=early_stopped,
     )
 
 

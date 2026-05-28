@@ -355,7 +355,13 @@ plt.close(fig)
         "kind": "trace",
         "default_n_drops": 1,    # ignored — uses fixed seed pair
         "default_n_real":  1,
-        "recipe_overrides": [],
+        "recipe_overrides": [
+            # Stage 22b: disable patience early-stop so the trace shows the
+            # FULL n_max trajectory (patience would truncate it at the
+            # residual plateau ~iter 50-80, defeating the purpose of the plot).
+            ("ADMM_EARLY_STOP_PATIENCE", "0",
+             "Full n_max trace — disable patience early-stop"),
+        ],
         "sweep_cli": [
             ("--drop-seed",       "int", "None",
              "Topology drop seed for the single trial. "
