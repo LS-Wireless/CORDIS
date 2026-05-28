@@ -756,10 +756,10 @@ SLURM_DEFAULTS_BY_KIND: Dict[str, Dict[str, str]] = {
 # wall time.  4h is more than enough for the default 10 tasks but
 # allows headroom if the user bumps N_TRIALS or shrinks N_ARRAY_TASKS.
 SLURM_ARRAY_DEFAULTS = {
-    "array_time":         "04:00:00",
+    "array_time":         "06:00:00",
     "cpus":               "40",
-    "default_n_tasks":    10,
-    "default_array_last": 9,    # zero-indexed → 0-9 means 10 tasks
+    "default_n_tasks":    20,
+    "default_array_last": 19,    # zero-indexed → 0-9 means 10 tasks
 }
 
 SLURM_TEMPLATE = """\

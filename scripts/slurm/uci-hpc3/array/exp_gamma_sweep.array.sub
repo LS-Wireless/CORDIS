@@ -6,7 +6,7 @@
 # SLURM JOB-ARRAY submission script for the 'gamma_sweep' experiment.
 #
 # Splits ``N_TRIALS_TOTAL`` trials across ``N_ARRAY_TASKS`` parallel
-# tasks (default 10).  Each task uses a unique seed so
+# tasks (default 20).  Each task uses a unique seed so
 # trial streams are disjoint.  Per-task output goes to:
 #
 #     results/exp_gamma_sweep/array_<jobid>_task_<id>/
@@ -30,9 +30,9 @@
 #SBATCH --job-name=cordis-gamma_sweep-array
 #SBATCH --output=logs/slurm/gamma_sweep-array-%A_%a.out
 #SBATCH --error=logs/slurm/gamma_sweep-array-%A_%a.err
-#SBATCH --time=04:00:00
+#SBATCH --time=06:00:00
 #SBATCH --cpus-per-task=40
-#SBATCH --array=0-9
+#SBATCH --array=0-19
 #SBATCH --partition=standard
 #SBATCH --account=swindle_lab
 #SBATCH --mail-type=END,FAIL
