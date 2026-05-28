@@ -114,7 +114,12 @@ def _resolve_spec_set(name: str):
 
 
 def list_spec_sets() -> list:
-    """Public accessor for the four named spec sets (e.g., for CLI choices)."""
+    """Public accessor for the five named spec sets (e.g., for CLI choices).
+
+    Names returned in registration order: ``cordis_only``,
+    ``cordis_vs_centralized``, ``cordis_vs_benchmarks``,
+    ``all_algorithms``, ``psr_baselines``.
+    """
     return list(_SPEC_SETS)
 
 

@@ -51,8 +51,6 @@ from cordis.experiments.result import (
 )
 
 from cordis.experiments.specs import (
-    # Algorithmic convergence tolerances (Stage-19d; not config-backed)
-    DEFAULT_EPS_PRI, DEFAULT_EPS_DUAL,
     # individual spec builders
     split_spec, admm_spec, centralized_spec,
     mrt_spec, zf_spec, rzf_spec, lrmmse_spec,
@@ -74,8 +72,8 @@ from cordis.experiments.sweeps import (
 from cordis.experiments.registry import (
     REGISTRY,
     list_experiments,
-    get_experiment,
     list_spec_sets,
+    get_experiment,
     # convenience direct exports
     run_sinr_cdf, run_scnr_cdf,
     run_gamma_sweep, run_kappa_sweep, run_clutter_cnr_sweep,
@@ -91,10 +89,8 @@ __all__ = [
     "experiment_dir", "figure_dir", "latest_result", "log_dir",
     # result
     "ExperimentResult", "LoadedADMMResult", "VALID_KINDS",
-    # specs — algorithmic tolerances (only DEFAULT_* kept; others removed
-    # in favour of config-as-single-source-of-truth)
-    "DEFAULT_EPS_PRI", "DEFAULT_EPS_DUAL",
-    # specs — builders
+    # specs — builders (no DEFAULT_* exports — config is the single
+    # source of truth for every parameter)
     "split_spec", "admm_spec", "centralized_spec",
     "mrt_spec", "zf_spec", "rzf_spec", "lrmmse_spec",
     "global_mrt_spec", "global_zf_spec",
@@ -107,7 +103,7 @@ __all__ = [
     # sweeps
     "SweepAxis", "sweep_config_field", "sweep_spec_factory",
     # registry
-    "REGISTRY", "list_experiments", "get_experiment", "list_spec_sets",
+    "REGISTRY", "list_experiments", "list_spec_sets", "get_experiment",
     "run_sinr_cdf", "run_scnr_cdf",
     "run_gamma_sweep", "run_kappa_sweep", "run_clutter_cnr_sweep",
     "run_csi_sweep",

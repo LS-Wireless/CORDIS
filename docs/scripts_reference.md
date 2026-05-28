@@ -18,6 +18,7 @@ Regenerate with: `./scripts/list_scripts.sh`
   exp_antennas_sweep.py              scripts/exp_antennas_sweep.py
   exp_clutter_cnr_sweep.py           scripts/exp_clutter_cnr_sweep.py
   exp_convergence_trace.py           scripts/exp_convergence_trace.py
+  exp_csi_sweep.py                   scripts/exp_csi_sweep.py
   exp_fronthaul_table.py             scripts/exp_fronthaul_table.py
   exp_gamma_sweep.py                 scripts/exp_gamma_sweep.py
   exp_kappa_sweep.py                 scripts/exp_kappa_sweep.py
@@ -31,6 +32,7 @@ Regenerate with: `./scripts/list_scripts.sh`
   plot_antennas_sweep.py             scripts/plot_antennas_sweep.py
   plot_clutter_cnr_sweep.py          scripts/plot_clutter_cnr_sweep.py
   plot_convergence_trace.py          scripts/plot_convergence_trace.py
+  plot_csi_sweep.py                  scripts/plot_csi_sweep.py
   plot_fronthaul_table.py            scripts/plot_fronthaul_table.py
   plot_gamma_sweep.py                scripts/plot_gamma_sweep.py
   plot_kappa_sweep.py                scripts/plot_kappa_sweep.py

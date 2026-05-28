@@ -58,17 +58,14 @@ API match with the real algorithm stack
 
 * Config as single source of truth (paper revision).  Tuning knobs
   with a counterpart in ``cfg.algorithm.*`` default to ``None`` here:
-  ``gamma_u_db``, ``kappa``, ``rho_admm``, ``n_admm_max``, ``xi_slack``.
-  The corresponding spec.params entry is only emitted if the caller
-  explicitly passes a value.  Every ``run_*`` function in
+  ``gamma_u_db``, ``kappa``, ``rho_admm``, ``n_admm_max``,
+  ``eps_pri``, ``eps_dual``, ``xi_slack``.  The corresponding
+  spec.params entry is only emitted if the caller explicitly passes
+  a value.  Every ``run_*`` function in
   ``cordis.experiments.registry`` calls ``_admm_kwargs_from_cfg(cfg)``
   to extract these from cfg and forward them, so user config takes
   effect — but the JSON config remains the only place the value lives.
-
-* Convergence tolerances ``eps_pri`` / ``eps_dual`` are kept as
-  module-level defaults (``DEFAULT_EPS_PRI=1.0``, ``DEFAULT_EPS_DUAL=1.0``;
-  Stage-19d).  They have no useful per-experiment override; keeping
-  them as defaults avoids forcing every caller to thread them.
+  No shadow defaults; no DEFAULT_* constants in this module.
 
 * The following knobs are deliberately NOT placed in spec.params
   even though the dispatcher would forward them:
@@ -154,23 +151,21 @@ _DISPLAY: Dict[str, str] = {
 # ─────────────────────────────────────────────────────────────────────
 #  Sentinel-default policy (paper revision)
 #
-#  ADMM tuning knobs that have a counterpart in ``cfg.algorithm.admm.*``
-#  default to None here.  ``None`` means "let the algorithm read the
-#  value from cfg" — the spec.params dict is built conditionally via
-#  :func:`_admm_params`, so omitted knobs aren't injected.  This keeps
-#  the JSON config the single source of truth and prevents the
-#  out-of-sync-defaults pitfall where bumping cfg.algorithm.admm.n_max
-#  silently has no effect (the old DEFAULT_N_ADMM_MAX=50 overrode it).
+#  Every ADMM tuning knob that has a counterpart in
+#  ``cfg.algorithm.admm.*`` defaults to None here.  ``None`` means
+#  "let the algorithm read the value from cfg" — the spec.params dict
+#  is built conditionally via :func:`_admm_params`, so omitted knobs
+#  aren't injected.  This keeps the JSON config the single source of
+#  truth and prevents the out-of-sync-defaults pitfall where bumping
+#  cfg.algorithm.admm.n_max silently has no effect (the old
+#  DEFAULT_N_ADMM_MAX=50 would override it).
 #
-#  Convergence tolerances (eps_pri / eps_dual) are kept as
-#  algorithmic constants rather than config knobs because they're set
-#  numerically large (= 1.0) per Stage-19d, well past the practical
-#  convergence threshold — keeping them as module-level defaults
-#  avoids forcing every caller to thread them through.
+#  All six knobs follow the same pattern: ``kappa``, ``rho_admm``,
+#  ``n_admm_max``, ``eps_pri``, ``eps_dual``, ``xi_slack``.  Under
+#  normal use, :func:`_admm_kwargs_from_cfg` in registry.py extracts
+#  them from cfg and forwards them as kwargs — so the cfg values DO
+#  end up in spec.params and the algorithm receives them.
 # ─────────────────────────────────────────────────────────────────────
-
-DEFAULT_EPS_PRI     = 1.0     # matches cfg.algorithm.admm.eps_pri  (was 1e-3 in Stage-19b)
-DEFAULT_EPS_DUAL    = 1.0     # matches cfg.algorithm.admm.eps_dual (was 1e-3 in Stage-19b)
 
 
 def _gamma_vec(gamma_u_db: float, n_ue: int) -> np.ndarray:
@@ -197,6 +192,8 @@ def _admm_params(
     kappa:      Optional[float] = None,
     rho_admm:   Optional[float] = None,
     n_admm_max: Optional[int]   = None,
+    eps_pri:    Optional[float] = None,
+    eps_dual:   Optional[float] = None,
     xi_slack:   Optional[float] = None,
 ) -> dict:
     """Conditionally pack ADMM tuning knobs into spec.params.
@@ -214,6 +211,8 @@ def _admm_params(
     if kappa is not None:      out["kappa"]      = float(kappa)
     if rho_admm is not None:   out["rho_admm"]   = float(rho_admm)
     if n_admm_max is not None: out["n_admm_max"] = int(n_admm_max)
+    if eps_pri is not None:    out["eps_pri"]    = float(eps_pri)
+    if eps_dual is not None:   out["eps_dual"]   = float(eps_dual)
     if xi_slack is not None:   out["xi_slack"]   = float(xi_slack)
     return out
 
@@ -253,29 +252,22 @@ def admm_spec(
     kappa:      Optional[float] = None,
     rho_admm:   Optional[float] = None,
     n_admm_max: Optional[int]   = None,
-    eps_pri:    float           = DEFAULT_EPS_PRI,
-    eps_dual:   float           = DEFAULT_EPS_DUAL,
+    eps_pri:    Optional[float] = None,
+    eps_dual:   Optional[float] = None,
     xi_slack:   Optional[float] = None,
     **ignored,
 ) -> AlgorithmSpec:
     """CORDIS-ADMM (Algorithm 2): decentralised consensus-ADMM.
 
-    Notes
-    -----
-    ``eps_pri``/``eps_dual`` are algorithmic convergence tolerances kept
-    as module-level defaults (Stage-19d bumped them from 1e-3 to 1.0,
-    well past the practical convergence threshold).  They're always
-    placed in spec.params so the algorithm sees the same value
-    regardless of caller.
-
-    ``kappa``, ``rho_admm``, ``n_admm_max``, and ``xi_slack`` default
-    to ``None`` and are only added to spec.params if the caller passes
-    an explicit value (the ``_admm_params`` sentinel pattern).  Under
-    normal use, :func:`_admm_kwargs_from_cfg` in
-    ``cordis/experiments/registry.py`` extracts them from
-    ``cfg.algorithm.admm.*`` for every ``run_*`` function, so user
-    config takes effect — but the JSON config remains the single
-    source of truth (no shadow defaults here).
+    All six ADMM tuning knobs (``kappa``, ``rho_admm``, ``n_admm_max``,
+    ``eps_pri``, ``eps_dual``, ``xi_slack``) default to ``None`` and are
+    only added to spec.params if the caller passes an explicit value
+    (the ``_admm_params`` sentinel pattern).  Under normal use,
+    :func:`_admm_kwargs_from_cfg` in ``cordis/experiments/registry.py``
+    extracts them from ``cfg.algorithm.admm.*`` for every ``run_*``
+    function and forwards them, so user config takes effect — but the
+    JSON config remains the single source of truth (no shadow defaults
+    here).
     """
     return AlgorithmSpec(
         name=_DISPLAY["admm"],
@@ -284,10 +276,10 @@ def admm_spec(
             **_gamma_params(gamma_u_db, n_ue),
             **_admm_params(
                 kappa=kappa, rho_admm=rho_admm,
-                n_admm_max=n_admm_max, xi_slack=xi_slack,
+                n_admm_max=n_admm_max,
+                eps_pri=eps_pri, eps_dual=eps_dual,
+                xi_slack=xi_slack,
             ),
-            "eps_pri":  float(eps_pri),
-            "eps_dual": float(eps_dual),
             # slack_tol / warm_start_from_split deliberately NOT included
             # — slack_tol has no cfg counterpart; warm_start_from_split is
             # a dead config field (algorithm always warm-starts internally).
@@ -442,9 +434,6 @@ def psr_baselines(**kw) -> List[AlgorithmSpec]:
 __all__ = [
     # Display-name + benchmark-name lookup tables
     "_DISPLAY", "_BENCHMARK_NAME",
-    # Algorithmic convergence tolerances (Stage-19d; kept as module-level
-    # defaults because there's no useful per-experiment override of them)
-    "DEFAULT_EPS_PRI", "DEFAULT_EPS_DUAL",
     # Individual spec builders
     "split_spec", "admm_spec", "centralized_spec",
     "mrt_spec", "zf_spec", "rzf_spec", "lrmmse_spec",
