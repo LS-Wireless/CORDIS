@@ -323,8 +323,8 @@ plt.close(fig)
         "default_n_real":  2,
         "recipe_overrides": [
             ("N_TRIALS", "100", ""),
-            ("N_ANT",    "10",  "Baseline; swept at runtime"),
-            ("N_RF_CHAINS", "10", "Matches N_ANT"),
+            # ("N_ANT",    "10",  "Baseline; swept at runtime"),
+            # ("N_RF_CHAINS", "10", "Matches N_ANT"),
         ],
         "sweep_cli": [
             ("--n-ant-values", "str", "''",

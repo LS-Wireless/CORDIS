@@ -25,8 +25,6 @@ fi
 # ─── OVERRIDES — edit these ──────────────────────────────────────────
 NAME="exp_antennas_sweep"
 N_TRIALS=100
-N_ANT=10    # Baseline; swept at runtime
-N_RF_CHAINS=10    # Matches N_ANT
 
 # ─── Defaults for everything else ────────────────────────────────────
 source "$SCRIPT_DIR/_defaults.sh"
