@@ -131,7 +131,7 @@ def test_02_array_sub_scripts_exist():
         )
 
 
-@_register("Test  3: array .sub scripts use 40 CPUs, 4h, and have a "
+@_register("Test  3: array .sub scripts use 40 CPUs, 4-6h, and have a "
            "#SBATCH --array=0-N directive")
 def test_03_array_sub_resource_directives():
     array_dir = REPO_ROOT / "scripts" / "slurm" / "uci-hpc3" / "array"
@@ -145,8 +145,8 @@ def test_03_array_sub_resource_directives():
         )
         # 4h time
         m = re.search(r"#SBATCH --time=(\d+):", text)
-        assert m and int(m.group(1)) == 4, (
-            f"{name}: --time should be 4h (Stage 21 array default); "
+        assert m and int(m.group(1)) == 6, (
+            f"{name}: --time should be 6h (Stage 21 array default); "
             f"got {m.group(1) if m else 'MISSING'}h"
         )
         # --array=0-N

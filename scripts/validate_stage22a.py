@@ -283,9 +283,13 @@ def test_10_solve_cordis_admm_signature():
         "callers don't break).  Add `= \"residual_norm\"`."
     )
     assert (isinstance(default, ast.Constant)
-            and default.value == "residual_norm"), (
+            and default.value is None), (
         f"`best_iter_criterion` default = "
-        f"{ast.unparse(default) if default else None}, want 'residual_norm'"
+        f"{ast.unparse(default) if default else None}, want None.  "
+        f"Stage 23a changed solve_cordis_admm to default this kwarg to None "
+        f"and resolve it from cfg.algorithm.admm.best_iter_criterion when not "
+        f"passed, so the JSON config is authoritative (an explicit kwarg still "
+        f"overrides)."
     )
 
 

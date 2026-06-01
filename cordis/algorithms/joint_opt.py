@@ -19,34 +19,45 @@ where
     i^(s)_{a_t,u} = col_{t∈T}{ ĥ_{a_t u}^H W_a[:, n_ue+t] }       (complex vector, N_t)
     e_{a_t,u}     = ‖R̃_{a_t u}^{1/2} W_a‖_F                       (real scalar, ≥ 0)
 
-    NOTE: The paper writes e_au as the SQUARED Frobenius norm (a power).  This
-    paper-faithful definition makes (e_au + Σ_err)² quartic in W_a (breaking
-    the QCQP claim) AND introduces √z^err inside the CPU SOC, which has no
-    DCP-compliant CVXPY encoding (any of `z_err ≤ aux²`, `aux ≥ √z_err`, etc.
-    violates CVXPY's `convex ≤ concave` rule).  We instead use the AMPLITUDE
-    form e_au = ‖R̃^{1/2} W_a‖_F, which is:
-       • DCP-friendly at the CPU: z^err appears directly in the SOC stack, and
-         the built-in squaring inside the L2 norm gives (z^err)² as the
-         CSI-error contribution to ‖v_u‖².
-       • Conservative: by the triangle inequality,
-            (z^err)² = (Σ_a ‖R̃^{1/2} W_a‖_F)²  ≥  Σ_a ‖R̃^{1/2} W_a‖²_F
-         = true total CSI-error power.  So the SOC upper-bounds the true
-         interference, providing the same SINR protection or stronger.
+CSI-error aggregation (Stage 23b — exact per-AP block)
+-----------------------------------------------------
+The per-(AP,user) contribution carries the AMPLITUDE e_{a_t,u} = ‖R̃^{1/2} W_a‖_F
+(not the squared form), which keeps the local QCQP a true QCQP and the CPU
+SOC DCP-clean.  The CSI errors at different transmit APs are *statistically
+independent*, so their powers add:
 
-Consensus:                 z_u = Σ_{a_t} l_{a_t,u}.
+    P_CSI-Error(u) = Σ_{a_t} ‖R̃_{a_t u}^{1/2} W_{a_t}‖_F² = Σ_{a_t} e_{a_t u}²   .
+
+We therefore keep the CSI-error contributions PER-AP in the consensus vector
+(a length-N_tx block, gathered rather than coherently summed) and stack them
+individually in the CPU SOC.  The L2-norm squaring then yields exactly
+Σ_{a_t} e_{a_t u}², i.e. the SOC is the EXACT per-user SINR constraint.
+
+    (Previously the block was a single scalar z^err = Σ_a e_{a u}; squaring it
+     in the SOC gave (Σ_a e_{a u})² ≥ Σ_a e_{a u}², an over-count of the
+     CSI-error power by all the cross terms — up to a factor N_tx.  That made
+     the SINR constraint conservatively tight and manufactured infeasibility.
+     The per-AP block removes that conservatism.)
+
+The CDS / MUI / S2CI components are still coherently summed across APs
+(z^CDS = Σ_a x_{a u}, etc.) because those signals combine coherently at the
+user; only the CSI-error block is gathered.
+
+Consensus:  z_u^{CDS,MUI,S2CI} = Σ_{a_t} l_{a_t,u}^{·} ;  z_u^err = (e_{a_t u})_{a_t} .
 
 Augmented Lagrangian:
     L_ρ = Σ_a Ũ_a^sens(W_a) − (ρ/2) Σ_u ‖Σ_a l_{a,u}(W_a) − z_u + ν_u‖²
+(with the err block contributing the per-AP terms Σ_a (e_{a,u} − z_u^err[a] + ν_u^err[a])²).
 
 Per ADMM iteration n:
     Phase I  — Parallel per-AP QCQP:  P-Local (eq. admm-p-local)
                   max Ũ_a^sens(W_a) − (ρ/2) Σ_u ‖l_{a,u}(W_a) + Σ_{a,u}^(n)‖²
                   s.t.  ‖W_a‖²_F ≤ Pmax
-                with Σ_{a,u}^(n) = Σ̃_u^(n) − l_{a,u}^(n).
+                with Σ_{a,u}^(n) = Σ̃_u^(n) − l_{a,u}^(n)  (err block uses only AP a's slot).
 
     Phase II — Per-user CPU SOCP projection:  P-Central (eq. admm-p-central)
                   min ‖Σ_a l_{a,u}^(n+1) + ν_u^(n) − z_u‖² + ξ ε_u
-                  s.t.  ‖[z^MUI; z^S2CI; z^err; 1]‖_2  ≤  Re{z^CDS}/√γ + ε_u,
+                  s.t.  ‖[z^MUI; z^S2CI; z^err_1..z^err_Ntx; 1]‖_2  ≤  Re{z^CDS}/√γ + ε_u,
                         Im{z_u^CDS} = 0,  z_u^err ≥ 0,  ε_u ≥ 0.
 
     Dual:  ν_u^(n+1) = ν_u^(n) + Σ_a l_{a,u}^(n+1) − z_u^(n+1).
@@ -67,8 +78,10 @@ Numerical handling
    The *exact* e_au^(n+1) = ‖R̃̃^{1/2} W̃_a^(n+1)‖_F is computed post-solve
    for transmission to the CPU.
 
-3. The SOC at the CPU is a clean L2-norm inequality with z^err in the cone
-   stack directly — no √, no rotated cone, no auxiliary variable.
+3. The SOC at the CPU is a clean L2-norm inequality with the per-AP z^err
+   amplitudes in the cone stack directly — no √, no rotated cone, no
+   auxiliary variable.  Stacking the per-AP entries makes ‖·‖² reproduce
+   Σ_a e_au² = the exact CSI-error power.
 """
 
 from __future__ import annotations
@@ -127,22 +140,19 @@ class LocalContribution:
     s2ci : complex (N_t,)     — ĥ̃^H W̃_a[:, n_ue+t]
     err  : real scalar        — ‖R̃̃^{1/2} W̃_a‖_F   (AMPLITUDE form, ≥ 0)
 
-    NOTE on the err component: the journal paper defines e_au = ‖R̃^{1/2} W_a‖²_F
-    (power).  However, this leads to (e_au + const)² being quartic in W_a inside
-    the ADMM penalty (breaking the QCQP claim) AND requires √z^err inside the
-    SOC at the CPU which cannot be encoded as a DCP-compliant CVXPY constraint
-    (any of `z_err ≤ aux²`, `aux ≥ √z_err`, etc. fails DCP).
+    NOTE on the err component (Stage 23b): we use the AMPLITUDE form
+    err = ‖R̃^{1/2} W_a‖_F (not the squared form) so the local QCQP stays a
+    true QCQP and the CPU SOC is DCP-clean.  Crucially, the per-AP errors are
+    NOT coherently summed into a single consensus scalar — they are gathered
+    into a per-AP block in :class:`ConsensusVector` and stacked individually
+    in the CPU SOC.  Because the CSI errors are independent across APs, their
+    powers add, so the SOC's squared norm reproduces Σ_a ‖R̃^{1/2} W_a‖_F²
+    EXACTLY (the true per-user CSI-error power), rather than the conservative
+    (Σ_a ‖R̃^{1/2} W_a‖_F)² over-count produced by summing the amplitudes.
 
-    We therefore work with the AMPLITUDE form  err = ‖R̃^{1/2} W_a‖_F  throughout:
-        • At the CPU, the SOC stack contains z^err directly (no √), and the
-          built-in squaring inside ‖·‖² yields (z^err)² as the CSI-error term.
-          Since z^err = Σ_a ‖R̃^{1/2} W_a‖_F, by the triangle inequality
-          (z^err)² ≥ Σ_a ‖R̃^{1/2} W_a‖²_F = true total CSI-error power.
-          So the SOC is a CONSERVATIVE (tighter) upper bound on the original
-          SINR constraint — same protection, slightly more pessimistic.
-        • At the AP, the err component is convex (a norm), so the consensus
-          penalty (err + Σ_err)² is not DCP directly; we use an SCA tangent
-          to linearise it, matching the SCA scheme already used for sensing.
+    At the AP, the err component is convex (a norm), so the consensus penalty
+    (err − z^err[a] + ν^err[a])² is linearised via an SCA tangent around the
+    previous iterate, matching the SCA scheme used for the sensing utility.
     """
     cds:  complex
     mui:  NDArray[np.complex128]
@@ -152,14 +162,30 @@ class LocalContribution:
 
 @dataclass
 class ConsensusVector:
-    """Global per-user consensus vector z_u (same fields as LocalContribution).
+    """Global per-user consensus vector z_u.
 
-    All components live in SNR-normalised units; err is an AMPLITUDE (≥ 0).
+    cds  : complex scalar         — coherent sum Σ_a x_{a u}
+    mui  : complex (N_ue-1,)      — coherent sum Σ_a i^(c)_{a u}
+    s2ci : complex (N_t,)         — coherent sum Σ_a i^(s)_{a u}
+    err  : real (N_tx,)           — PER-AP CSI-error amplitudes (gathered, NOT
+                                    summed).  Stage 23b: each transmit AP owns
+                                    one slot; the CPU SOC stacks all of them so
+                                    ‖z^err‖² = Σ_a e_{a u}² = exact CSI-error
+                                    power.
+
+    All components live in SNR-normalised units; err entries are AMPLITUDES (≥ 0).
+
+    NOTE: the per-AP residual objects fed to the local QCQP (``Sigma_au``) reuse
+    this dataclass for cds/mui/s2ci, but their err slot is unused there — the
+    local QCQP receives its scalar per-AP err residual via a dedicated
+    ``sigma_err_au`` argument.  Only the GLOBAL consensus objects (z_u, ν_u,
+    Σ̃_u, and the output of :func:`_sum_local_contributions`) carry a true
+    length-N_tx err vector.
     """
     cds:  complex
     mui:  NDArray[np.complex128]
     s2ci: NDArray[np.complex128]
-    err:  float
+    err:  NDArray[np.float64]
 
 
 @dataclass
@@ -189,6 +215,71 @@ class ADMMResult:
     best_iter:            int         = 0
     rho_history:          List[float] = field(default_factory=list)
     early_stopped:        bool        = False
+
+
+# =============================================================================
+# Best-iterate selection (Stage 23a) — pure, unit-testable decision rule
+# =============================================================================
+
+def _should_take_iterate(
+    criterion: str,
+    *,
+    cand_feasible:   bool,
+    cand_min_sinr:   float,
+    cand_resid_norm: float,
+    cand_r_pri:      float,
+    best_feasible:   bool,
+    best_min_sinr:   float,
+    best_resid_norm: float,
+    best_r_pri:      float,
+) -> bool:
+    """Return True if the candidate iterate should replace the incumbent.
+
+    Three criteria:
+
+      * ``"residual_norm"`` (default): pick the iterate with the smallest
+        combined primal+dual residual (the ADMM-natural optimality measure),
+        ties broken by higher worst-user SINR.
+
+      * ``"min_sinr"`` (legacy): pick the iterate with the highest worst-user
+        SINR, ties broken by lower primal residual.
+
+      * ``"feasible_then_residual"`` (Stage 23a): prefer iterates that are
+        *feasible* (min-SINR ≥ γ for every user), ranked by worst-user SINR;
+        among iterates that are all infeasible, fall back to lowest residual
+        (closest to a feasible consensus), ties broken by higher min-SINR.  A
+        feasible incumbent is NEVER replaced by an infeasible candidate.  This
+        returns the best feasible beamformer the algorithm actually produced
+        (the "best feasible incumbent" pattern) instead of discarding a
+        transiently-feasible iterate because the run ended infeasible.
+    """
+    if criterion == "feasible_then_residual":
+        if cand_feasible and not best_feasible:
+            return True
+        if cand_feasible and best_feasible:
+            if cand_min_sinr > best_min_sinr + 1e-12:
+                return True
+            return (abs(cand_min_sinr - best_min_sinr) < 1e-12
+                    and cand_resid_norm < best_resid_norm - 1e-12)
+        if (not cand_feasible) and (not best_feasible):
+            if cand_resid_norm < best_resid_norm - 1e-12:
+                return True
+            return (abs(cand_resid_norm - best_resid_norm) < 1e-12
+                    and cand_min_sinr > best_min_sinr + 1e-12)
+        # candidate infeasible, incumbent feasible → never downgrade
+        return False
+
+    if criterion == "residual_norm":
+        if cand_resid_norm < best_resid_norm - 1e-12:
+            return True
+        return (abs(cand_resid_norm - best_resid_norm) < 1e-12
+                and cand_min_sinr > best_min_sinr)
+
+    # "min_sinr"
+    if cand_min_sinr > best_min_sinr + 1e-12:
+        return True
+    return (abs(cand_min_sinr - best_min_sinr) < 1e-12
+            and cand_r_pri < best_r_pri)
 
 
 # =============================================================================
@@ -239,12 +330,13 @@ def _compute_local_contribution(
     return LocalContribution(cds=cds, mui=mui, s2ci=s2ci, err=err_val)
 
 
-def _zeros_consensus(n_ue_minus_1: int, n_t: int) -> ConsensusVector:
+def _zeros_consensus(n_ue_minus_1: int, n_t: int, n_tx: int) -> ConsensusVector:
+    """Zero consensus vector with a length-``n_tx`` per-AP err block (Stage 23b)."""
     return ConsensusVector(
         cds=0.0 + 0.0j,
         mui=np.zeros(n_ue_minus_1, dtype=np.complex128),
         s2ci=np.zeros(n_t, dtype=np.complex128),
-        err=0.0,
+        err=np.zeros(n_tx, dtype=np.float64),
     )
 
 
@@ -264,14 +356,20 @@ def _sum_local_contributions(
     n_ue_minus_1: int,
     n_t: int,
 ) -> ConsensusVector:
-    """Σ_{a_t} l_{a_t, u}  →  acts as the empirical consensus target."""
-    out = _zeros_consensus(n_ue_minus_1, n_t)
-    for a in tx_ap_indices:
+    """Aggregate the per-AP contributions for user ``u`` into z_u's target.
+
+    CDS / MUI / S2CI are coherently SUMMED across APs.  The CSI-error block
+    is GATHERED per-AP (Stage 23b): ``err[slot]`` holds AP ``tx_ap_indices[slot]``'s
+    own amplitude e_{a u}, so the CPU SOC reproduces Σ_a e_{a u}² exactly.
+    """
+    n_tx = len(tx_ap_indices)
+    out = _zeros_consensus(n_ue_minus_1, n_t, n_tx)
+    for slot, a in enumerate(tx_ap_indices):
         l = l_dict[(a, u)]
         out.cds  += l.cds
         out.mui  += l.mui
         out.s2ci += l.s2ci
-        out.err  += l.err
+        out.err[slot] = l.err          # GATHER (per-AP), not coherent sum
     return out
 
 
@@ -286,7 +384,8 @@ def _solve_local_qcqp(
     sensing_stats:   SensingChannelStatistics,
     est:             EstimationResult,
     topo:            NetworkTopology,
-    Sigma_au:        Dict[int, ConsensusVector],   # Σ_{a,u}^(n)  per user (constants)
+    Sigma_au:        Dict[int, ConsensusVector],   # Σ_{a,u}^(n)  per user (cds/mui/s2ci)
+    sigma_err_au:    Dict[int, float],             # Σ_{a,u}^err[a] per user (scalar, Stage 23b)
     e_au_prev:       Dict[int, float],              # f_n = ‖R̃̃^{1/2} W̃^(n)‖_F per user
     sigma_n_sq:      float,
     Pmax:            float,
@@ -303,6 +402,10 @@ def _solve_local_qcqp(
 
     where l_au components are computed in SNR-normalised units, and the
     quadratic-in-W̃ e_au is replaced by its SCA tangent around W̃_prev.
+
+    Stage 23b: the err consensus is per-AP, so the err residual seen by this AP
+    is the scalar ``sigma_err_au[u] = ν_u^err[a] − z_u^err[a]`` (AP ``a``'s own
+    slot only); the penalty term is (e_au(W̃) + sigma_err_au[u])².
 
     Both ``rho_effective`` and ``kappa_effective`` are pre-scaled to the
     natural problem dimensions; see solve_cordis_admm for the derivation
@@ -352,7 +455,7 @@ def _solve_local_qcqp(
     penalty_per_u = []
 
     for u in range(n_ue):
-        sigma_au_u = Sigma_au[u]            # constant ConsensusVector
+        sigma_au_u = Sigma_au[u]            # constant ConsensusVector (cds/mui/s2ci)
 
         # Channel for AP a, user u (SNR-amplitude)
         h_tilde = est.h_hat[(a_idx, u)] * sqrt_snr     # (Mt,)
@@ -379,11 +482,12 @@ def _solve_local_qcqp(
         else:
             pen_s2ci = cp.Constant(0.0)
 
-        # ---- err:  (ẽ_au + Σ_err)²  with SCA tangent on AMPLITUDE ───────
-        # The err component is the Frobenius norm  f(W̃) = ‖R̃̃^{1/2} W̃‖_F
-        # which is convex but not affine.  SCA-linearise at W̃_prev:
-        #     T(W̃) = Re{tr((W̃_prev)^H R̃̃ W̃)} / f_n,    f_n = ‖R̃̃^{1/2} W̃_prev‖_F
-        # T is affine in W̃; T(W̃_prev) = f_n (exact at the tangent point).
+        # ---- err:  (ẽ_au + Σ_err[a])²  with SCA tangent on AMPLITUDE ────
+        # Stage 23b: per-AP err residual is the scalar sigma_err_au[u]
+        # ( = ν_u^err[a] − z_u^err[a] ), AP a's own slot only.  The err
+        # component f(W̃) = ‖R̃̃^{1/2} W̃‖_F is convex but not affine, so we
+        # SCA-linearise at W̃_prev:
+        #     T(W̃) = Re{tr((W̃_prev)^H R̃̃ W̃)} / f_n,  f_n = ‖R̃̃^{1/2} W̃_prev‖_F.
         R_tilde = est.R_tilde.get((a_idx, u))
         if R_tilde is not None:
             R_norm  = R_tilde * snr_scale                              # R̃̃
@@ -393,7 +497,7 @@ def _solve_local_qcqp(
                     cp.real(cp.trace(W_tilde_prev.conj().T @ R_norm @ W_var))
                     / f_n
                 )
-                err_resid = err_tangent + float(sigma_au_u.err)
+                err_resid = err_tangent + float(sigma_err_au[u])
                 pen_err   = cp.square(err_resid)
             else:
                 # Degenerate case (zero CSI error at W̃_prev); penalty drops out.
@@ -446,48 +550,48 @@ def _solve_local_qcqp(
 
 def _solve_central_socp(
     u: int,
-    sum_l_u:    ConsensusVector,        # Σ_{a_t} l_{a_t, u}^(n+1)  (constant)
-    nu_u:       ConsensusVector,        # ν_u^(n)  (constant)
+    sum_l_u:    ConsensusVector,        # Σ_{a_t} l_{a_t, u}^(n+1)  (constant; err gathered)
+    nu_u:       ConsensusVector,        # ν_u^(n)  (constant; err per-AP)
     gamma_u:    float,                  # SINR target (linear)
     n_ue_minus_1: int,
     n_t:        int,
+    n_tx:       int,                    # number of TX APs (err block length, Stage 23b)
     xi_slack:   float,
     solver:     str,
     nu_sinr_u:  float = 0.0,            # SOC-slack ALM multiplier
 ) -> Tuple[ConsensusVector, float, bool]:
     """
     Solve the per-user CPU SOCP P-Central (eq. admm-p-central) in
-    SNR-normalised units (noise → 1), using the AMPLITUDE convention for
-    z_u^err (see LocalContribution docstring for the rationale):
+    SNR-normalised units (noise → 1), using the per-AP CSI-error block
+    (Stage 23b; see module docstring):
 
         min  ‖sum_l_u + nu_u − z_u‖²
              + ν^sinr_u · ε_u + (ξ/2) · ε_u²        ← Augmented Lagrangian
-        s.t. ‖[z^MUI; z^S2CI; z^err; 1]‖_2  ≤  Re{z^CDS}/√γ_u  +  ε_u
+        s.t. ‖[z^MUI; z^S2CI; z^err_1..z^err_Ntx; 1]‖_2  ≤  Re{z^CDS}/√γ_u + ε_u
              Im{z_u^CDS} = 0,   z_u^err ≥ 0,   ε_u ≥ 0
 
-    The Augmented Lagrangian on ε_u (Method of Multipliers, Bertsekas
-    §4.2.4) supersedes the pure linear penalty ξ·ε of the exterior
-    penalty method.  The multiplier ν^sinr_u is updated outside the
-    SOCP via  ν^sinr ← max(0, ν^sinr + ξ · ε*),  which accumulates the
-    constraint violation and drives ε → 0 at *fixed* ξ — unlike pure
-    penalty which would need ξ → ∞.  The quadratic ε² term is the
-    augmentation that gives linear convergence under regularity.
+    The per-AP err amplitudes z^err_a are stacked individually in the SOC, so
+    the built-in squaring inside ‖·‖² yields Σ_a (z^err_a)² = the EXACT
+    per-user CSI-error power Σ_a ‖R̃^{1/2} W_a‖_F² (no cross-term over-count).
 
-    The squaring inside ‖·‖² gives (z^err)² as the CSI-error contribution,
-    consistent with z^err being an aggregate amplitude (≥ Σ_a ‖R̃^{1/2} W_a‖_F).
+    The Augmented Lagrangian on ε_u (Method of Multipliers, Bertsekas §4.2.4)
+    supersedes the pure linear penalty ξ·ε of the exterior penalty method.
+    The multiplier ν^sinr_u is updated outside the SOCP via
+    ν^sinr ← max(0, ν^sinr + ξ · ε*), driving ε → 0 at fixed ξ.
+
     Returns (z_u, eps_u, success).
     """
-    # CVXPY variables — note that putting z^err directly in the SOC stack
-    # (no √-aux, no rotated-cone) is the key DCP-safe encoding here.
+    # CVXPY variables — note that putting each z^err_a directly in the SOC
+    # stack (no √-aux, no rotated-cone) is the key DCP-safe encoding here.
     z_cds_re = cp.Variable()                                # Im{z_cds}=0 ⇒ real var
     z_mui    = cp.Variable(n_ue_minus_1, complex=True) if n_ue_minus_1 > 0 else None
     z_s2ci   = cp.Variable(n_t, complex=True)                if n_t > 0           else None
-    z_err    = cp.Variable(nonneg=True)                      # AMPLITUDE, ≥ 0
+    z_err    = cp.Variable(n_tx, nonneg=True)               # per-AP AMPLITUDES, ≥ 0
     eps_u    = cp.Variable(nonneg=True)
 
     constraints: List = []
 
-    # ── Build SOC stack: [Re/Im of z_MUI, z_S2CI; z_err; 1]  (all affine) ──
+    # ── Build SOC stack: [Re/Im z_MUI, Re/Im z_S2CI; z_err_1..z_err_Ntx; 1] ──
     parts = []
     if z_mui is not None:
         parts.append(cp.real(z_mui))
@@ -495,7 +599,7 @@ def _solve_central_socp(
     if z_s2ci is not None:
         parts.append(cp.real(z_s2ci))
         parts.append(cp.imag(z_s2ci))
-    parts.append(cp.reshape(z_err, (1,), order='C'))         # scalar z_err in stack
+    parts.append(z_err)                                      # per-AP err vector in stack
     parts.append(np.array([1.0]))                            # σ_n → 1 (normalised)
     soc_vec = cp.hstack(parts)
 
@@ -504,7 +608,7 @@ def _solve_central_socp(
         cp.norm(soc_vec, 2) <= z_cds_re / float(np.sqrt(gamma_u)) + eps_u
     )
 
-    # ── Objective:  ‖sum_l + nu − z‖²  + ξ ε ──
+    # ── Objective:  ‖sum_l + nu − z‖²  + slack penalty ──
     #   CDS residual is complex; with z_cds_re real we split real/imag:
     cds_const   = complex(sum_l_u.cds + nu_u.cds)
     pen_cds     = cp.square(np.real(cds_const) - z_cds_re) + (np.imag(cds_const)) ** 2
@@ -521,14 +625,12 @@ def _solve_central_socp(
     else:
         pen_s2ci = cp.Constant(0.0)
 
-    err_const = float(sum_l_u.err + nu_u.err)
-    pen_err   = cp.square(err_const - z_err)
+    # Per-AP err block (Stage 23b): err_const is a length-N_tx vector.
+    err_const = np.asarray(sum_l_u.err + nu_u.err, dtype=np.float64)
+    pen_err   = cp.sum_squares(err_const - z_err)
 
     # Augmented Lagrangian penalty on the SOC slack ε_u:
     #     ν^sinr_u · ε_u  +  (ξ/2) · ε_u²
-    # Multiplier ν^sinr_u is accumulated by the outer loop after this
-    # solve; ξ stays bounded.  Both terms are convex in ε_u and accepted
-    # by CLARABEL/SCS without reformulation.
     slack_pen = nu_sinr_u * eps_u + 0.5 * xi_slack * cp.square(eps_u)
     obj = pen_cds + pen_mui + pen_s2ci + pen_err + slack_pen
     prob = cp.Problem(cp.Minimize(obj), constraints)
@@ -543,11 +645,11 @@ def _solve_central_socp(
                 "CPU SOCP (u=%d) failed. primary[%s]: %s | fallback[SCS]: %s",
                 u, solver, str(e_primary)[:160], str(e_fb)[:160],
             )
-            return _zeros_consensus(n_ue_minus_1, n_t), 0.0, False
+            return _zeros_consensus(n_ue_minus_1, n_t, n_tx), 0.0, False
 
     if prob.status not in ("optimal", "optimal_inaccurate") or z_cds_re.value is None:
         logger.debug("CPU SOCP (u=%d) status=%s", u, prob.status)
-        return _zeros_consensus(n_ue_minus_1, n_t), 0.0, False
+        return _zeros_consensus(n_ue_minus_1, n_t, n_tx), 0.0, False
 
     z_out = ConsensusVector(
         cds  = complex(float(z_cds_re.value), 0.0),
@@ -555,7 +657,7 @@ def _solve_central_socp(
                 if z_mui is not None else np.zeros(0, dtype=np.complex128)),
         s2ci = (np.asarray(z_s2ci.value, dtype=np.complex128)
                 if z_s2ci is not None else np.zeros(0, dtype=np.complex128)),
-        err  = float(z_err.value),
+        err  = np.asarray(z_err.value, dtype=np.float64).reshape(n_tx),
     )
     eps_out = float(eps_u.value) if eps_u.value is not None else 0.0
     return z_out, eps_out, True
@@ -566,11 +668,11 @@ def _solve_central_socp(
 # =============================================================================
 
 def _consensus_residual(l_sum: ConsensusVector, z: ConsensusVector) -> float:
-    """‖Σ_a l_au − z_u‖₂ in SNR-normalised mixed-type space."""
+    """‖Σ_a l_au − z_u‖₂ in SNR-normalised mixed-type space (err is per-AP)."""
     r2 = abs(l_sum.cds - z.cds) ** 2
     r2 += float(np.sum(np.abs(l_sum.mui - z.mui) ** 2))
     r2 += float(np.sum(np.abs(l_sum.s2ci - z.s2ci) ** 2))
-    r2 += (l_sum.err - z.err) ** 2
+    r2 += float(np.sum((l_sum.err - z.err) ** 2))      # per-AP err vector
     return float(np.sqrt(r2))
 
 
@@ -579,7 +681,7 @@ def _z_diff_norm(z_new: ConsensusVector, z_old: ConsensusVector) -> float:
     d2 = abs(z_new.cds - z_old.cds) ** 2
     d2 += float(np.sum(np.abs(z_new.mui - z_old.mui) ** 2))
     d2 += float(np.sum(np.abs(z_new.s2ci - z_old.s2ci) ** 2))
-    d2 += (z_new.err - z_old.err) ** 2
+    d2 += float(np.sum((z_new.err - z_old.err) ** 2))  # per-AP err vector
     return float(np.sqrt(d2))
 
 
@@ -592,6 +694,9 @@ def _compute_sinr_coherent(
     """
     Per-user SINR with coherent cross-AP combining (same fix as Stage 6b).
         SINR_u = |Σ_a ĥ^H W_a[:,u]|² / (Σ_k≠u |Σ_a ĥ^H W_a[:,k]|² + CSI-err + σ²)
+
+    Note the CSI-error term here is the EXACT Σ_a tr(W_a^H R̃ W_a) — the same
+    quantity the per-AP SOC block now enforces (Stage 23b).
     """
     n_ue = topo.n_ue
     D    = n_ue + topo.n_targets
@@ -646,7 +751,7 @@ def solve_cordis_admm(
     xi_slack:   float = 1e4,
     slack_tol:  float = 1e-3,
     n_snapshots: int  = 1,
-    best_iter_criterion: str = "residual_norm",
+    best_iter_criterion: Optional[str] = None,
     verbose:    bool  = False,
     progress:   bool  = False,
 ) -> ADMMResult:
@@ -655,6 +760,13 @@ def solve_cordis_admm(
 
     Parameters
     ----------
+    best_iter_criterion : {"residual_norm", "min_sinr", "feasible_then_residual"} or None
+        Criterion for selecting the returned iterate (Stage 23a).  When None
+        (default), it is read from ``cfg.algorithm.admm.best_iter_criterion``
+        so the JSON config stays authoritative; an explicit value overrides.
+        ``"feasible_then_residual"`` returns the highest-min-SINR iterate that
+        met γ (the best feasible incumbent), falling back to lowest-residual
+        when no iterate was feasible.
     eps_pri, eps_dual : convergence tolerances on primal / dual residuals.
         With the auto-balanced ρ (rho_admm=1), residuals naturally settle
         near 1 in SNR-amplitude units, so tolerances around 0.3-1.0 match
@@ -692,7 +804,16 @@ def solve_cordis_admm(
     D          = n_ue + n_t
     tx_idx     = [ap.idx for ap in topo.tx_aps]
     n_tx       = len(tx_idx)
+    ap_slot    = {a: i for i, a in enumerate(tx_idx)}   # AP idx → err-block slot (Stage 23b)
     solver_nm  = "CVXPY-" + cfg.algorithm.admm.solver
+
+    # ── Resolve best-iterate criterion from cfg when not passed (Stage 23a) ─
+    # Default None means "let the JSON config decide", keeping the config
+    # field authoritative; an explicit kwarg still wins.
+    if best_iter_criterion is None:
+        best_iter_criterion = getattr(
+            cfg.algorithm.admm, "best_iter_criterion", "residual_norm"
+        )
 
     # ── SINR targets ─────────────────────────────────────────────────────
     if gamma_u_db is None:
@@ -779,11 +900,11 @@ def solve_cordis_admm(
     nu_cur: Dict[int, ConsensusVector] = {}
     for u in range(n_ue):
         z_cur[u]  = _sum_local_contributions(l_cur, tx_idx, u, n_mui, n_t)
-        nu_cur[u] = _zeros_consensus(n_mui, n_t)                  # ν^(0) = 0
+        nu_cur[u] = _zeros_consensus(n_mui, n_t, n_tx)            # ν^(0) = 0
 
     # Initial broadcast Σ̃_u^(0) = Σ_a l_au^(0) − z_u^(0) + ν_u^(0) = 0
     Sigma_tilde_cur: Dict[int, ConsensusVector] = {
-        u: _zeros_consensus(n_mui, n_t) for u in range(n_ue)
+        u: _zeros_consensus(n_mui, n_t, n_tx) for u in range(n_ue)
     }
 
     # Histories
@@ -799,27 +920,14 @@ def solve_cordis_admm(
     consec_fail    = 0
     MAX_CONSEC_FAIL = 3
 
-    # ── Best-iterate fallback ────────────────────────────────────────────
-    # At infeasible γ the algorithm doesn't converge: r_pri rises after
-    # some early iters as the CPU pushes z toward an unreachable SOC and
-    # ν compounds.  Without tracking, we'd return the *last* (drifted)
-    # iterate.  We save the iterate with the HIGHEST min-SINR seen so far
-    # (the closest to feasibility for the SINR cone), breaking ties by
-    # lower r_pri.  This proxies feasibility by the metric the user
-    # actually cares about (per-user SINR), avoiding the failure mode
-    # where a tight-consensus iterate (low r_pri) has drifted into
-    # low-SINR territory.  At feasible γ the best iterate IS the
-    # converged one, so this is a no-regret change.
-    # ── Best-iterate selection (Stage 22a) ───────────────────────────────
-    # Two criteria are supported.  ``residual_norm`` (default) picks the
-    # iterate with the smallest combined primal+dual residual — the
-    # ADMM-natural optimality measure — and is robust to the late-
-    # iteration oscillation around the SOC boundary.  ``min_sinr``
-    # (legacy) picks the iterate with the highest worst-user SINR,
-    # ties broken by lower r_pri; on this algorithm it can select
-    # swinging iterates from the post-convergence region whose
-    # consensus isn't tight.  See the ADMMConfig docstring.
-    _ALLOWED_CRITERIA = ("residual_norm", "min_sinr")
+    # ── Best-iterate selection (Stage 22a + Stage 23a) ────────────────────
+    # Criteria (see _should_take_iterate):
+    #   "residual_norm" (default): smallest r_pri+r_dual; tie → higher min-SINR.
+    #   "min_sinr" (legacy): highest worst-user SINR; tie → lower r_pri.
+    #   "feasible_then_residual" (Stage 23a): best feasible incumbent (highest
+    #       min-SINR among iterates meeting γ); fall back to lowest residual
+    #       when none feasible.  See the ADMMConfig docstring.
+    _ALLOWED_CRITERIA = ("residual_norm", "min_sinr", "feasible_then_residual")
     if best_iter_criterion not in _ALLOWED_CRITERIA:
         raise ValueError(
             f"best_iter_criterion={best_iter_criterion!r} not in "
@@ -828,7 +936,8 @@ def solve_cordis_admm(
     best_min_sinr   = -float("inf")
     best_r_pri      = float("inf")
     best_slack_norm = float("inf")
-    best_resid_norm = float("inf")     # Stage 22a: r_pri + r_dual tracker
+    best_resid_norm = float("inf")     # r_pri + r_dual tracker
+    best_feasible   = False            # Stage 23a: did the incumbent meet γ?
     W_best     : Dict[int, NDArray[np.complex128]] = {
         a: W_cur[a].copy() for a in tx_idx
     }
@@ -903,6 +1012,7 @@ def solve_cordis_admm(
     if verbose:
         print(f"  [ADMM] rho={rho_admm}, kappa={kappa}, xi∈[{xi_floor:.1e}, "
               f"{xi_cap:.1e}], n_max={n_admm_max}, gamma_dB={lin2db(gamma_lin)}")
+        print(f"  [ADMM] best_iter_criterion={best_iter_criterion}")
         print(f"  [ADMM] adaptive_rho={adaptive_rho} (τ={rho_tau}, "
               f"μ={rho_mu_balance}, range=[{rho_min_factor}, "
               f"{rho_max_factor}]·rho_admm)")
@@ -960,8 +1070,14 @@ def solve_cordis_admm(
         W_new: Dict[int, NDArray] = {}
         all_ok = True
         for a in tx_idx:
+            slot_a = ap_slot[a]
             # Reconstruct AP-specific residual: Σ_au^(n) = Σ̃_u^(n) − l_au^(n)
+            # For cds/mui/s2ci this is the usual sum-consensus residual; for
+            # the err block (Stage 23b) only AP a's own slot matters, giving
+            # the scalar  Σ_au^err[a] = Σ̃_u^err[slot_a] − e_au^(n)
+            #            ( = ν_u^err[a] − z_u^err[a] ).
             Sigma_au: Dict[int, ConsensusVector] = {}
+            sigma_err_au: Dict[int, float] = {}
             e_prev_a: Dict[int, float] = {}
             for u in range(n_ue):
                 s_t = Sigma_tilde_cur[u]
@@ -970,8 +1086,9 @@ def solve_cordis_admm(
                     cds  = s_t.cds  - l_au.cds,
                     mui  = s_t.mui  - l_au.mui,
                     s2ci = s_t.s2ci - l_au.s2ci,
-                    err  = s_t.err  - l_au.err,
+                    err  = np.zeros(n_tx, dtype=np.float64),   # unused by local QCQP
                 )
+                sigma_err_au[u] = float(s_t.err[slot_a]) - l_au.err
                 e_prev_a[u] = e_cur[(a, u)]
 
             W_a_new, ok = _solve_local_qcqp(
@@ -982,6 +1099,7 @@ def solve_cordis_admm(
                 est=est,
                 topo=topo,
                 Sigma_au=Sigma_au,
+                sigma_err_au=sigma_err_au,
                 e_au_prev=e_prev_a,
                 sigma_n_sq=sigma_n_sq,
                 Pmax=Pmax,
@@ -1013,6 +1131,7 @@ def solve_cordis_admm(
                 gamma_u=float(gamma_lin[u]),
                 n_ue_minus_1=n_mui,
                 n_t=n_t,
+                n_tx=n_tx,
                 xi_slack=xi_cur,
                 solver=cfg.algorithm.admm.solver,
                 nu_sinr_u=float(nu_sinr[u]),
@@ -1037,7 +1156,7 @@ def solve_cordis_admm(
                 cds  = nu_cur[u].cds  + (sum_l_u.cds  - z_u.cds),
                 mui  = nu_cur[u].mui  + (sum_l_u.mui  - z_u.mui),
                 s2ci = nu_cur[u].s2ci + (sum_l_u.s2ci - z_u.s2ci),
-                err  = nu_cur[u].err  + (sum_l_u.err  - z_u.err),
+                err  = nu_cur[u].err  + (sum_l_u.err  - z_u.err),   # per-AP vector
             )
 
         # New broadcast Σ̃_u^(n+1) = Σ_a l_au^(n+1) − z_u^(n+1) + ν_u^(n+1)
@@ -1048,7 +1167,7 @@ def solve_cordis_admm(
                 cds  = sum_l_u.cds  - z_new[u].cds  + nu_new[u].cds,
                 mui  = sum_l_u.mui  - z_new[u].mui  + nu_new[u].mui,
                 s2ci = sum_l_u.s2ci - z_new[u].s2ci + nu_new[u].s2ci,
-                err  = sum_l_u.err  - z_new[u].err  + nu_new[u].err,
+                err  = sum_l_u.err  - z_new[u].err  + nu_new[u].err,   # per-AP vector
             )
 
         # ── Residuals ────────────────────────────────────────────────────
@@ -1060,7 +1179,7 @@ def solve_cordis_admm(
             r_pri        += _consensus_residual(sum_l_u, z_new[u])
             r_dual_inner += _z_diff_norm(z_new[u], z_cur[u])
             z_norm_sum   += _consensus_residual(z_new[u],
-                                                 _zeros_consensus(n_mui, n_t))
+                                                 _zeros_consensus(n_mui, n_t, n_tx))
         r_dual = rho_admm * r_dual_inner
 
         # Sensing utility (matching the QCQP objective, summed across APs).
@@ -1091,43 +1210,32 @@ def solve_cordis_admm(
         slack_hist.append(eps_new.copy())
         znorm_hist.append(z_norm_sum)
 
-        # ── Best-iterate snapshot ────────────────────────────────────────
-        # Two strategies (configurable via best_iter_criterion):
-        #
-        # 1. "residual_norm" (default):  pick the iterate with the smallest
-        #    combined primal+dual residual.  These residuals are the natural
-        #    ADMM optimality measure — small residuals mean the iterate
-        #    nearly satisfies the consensus constraint Σ_at l_at,u = z_u,
-        #    so the AP-side W actually delivers what the CPU-side SOC says
-        #    it should.  Ties broken by higher min-SINR.
-        #
-        # 2. "min_sinr" (legacy):  pick the iterate with the highest worst-
-        #    user SINR, ties broken by lower r_pri.  Direct optimisation of
-        #    the metric the user cares about, but susceptible to selecting
-        #    post-convergence swing peaks whose consensus is not actually
-        #    tight (so the W delivered doesn't match the SINR seen here).
+        # ── Best-iterate snapshot (Stage 22a + Stage 23a) ─────────────────
+        # Delegates the decision to the pure _should_take_iterate rule so
+        # the three criteria stay testable in isolation.  Feasibility is
+        # the SAME definition used by the downstream infeasibility metric:
+        # every user meets its γ, i.e. np.all(SINR_u ≥ γ_u).
         cand_min_sinr   = float(sinr_vec.min()) if sinr_vec.size else 0.0
         cand_slack      = float(np.max(eps_new)) if eps_new.size else 0.0
         cand_resid_norm = float(r_pri + r_dual)
-        take = False
-        if all_ok:
-            if best_iter_criterion == "residual_norm":
-                if cand_resid_norm < best_resid_norm - 1e-12:
-                    take = True                      # strictly tighter consensus
-                elif (abs(cand_resid_norm - best_resid_norm) < 1e-12
-                      and cand_min_sinr > best_min_sinr):
-                    take = True                      # same residual, higher SINR
-            else:  # "min_sinr"
-                if cand_min_sinr > best_min_sinr + 1e-12:
-                    take = True                      # strictly higher min-SINR
-                elif (abs(cand_min_sinr - best_min_sinr) < 1e-12
-                      and r_pri < best_r_pri):
-                    take = True                      # same min-SINR, tighter consensus
+        cand_feasible   = bool(np.all(sinr_vec >= gamma_lin)) if sinr_vec.size else False
+        take = all_ok and _should_take_iterate(
+            best_iter_criterion,
+            cand_feasible=cand_feasible,
+            cand_min_sinr=cand_min_sinr,
+            cand_resid_norm=cand_resid_norm,
+            cand_r_pri=r_pri,
+            best_feasible=best_feasible,
+            best_min_sinr=best_min_sinr,
+            best_resid_norm=best_resid_norm,
+            best_r_pri=best_r_pri,
+        )
         if take:
             best_min_sinr   = cand_min_sinr
             best_r_pri      = r_pri
             best_resid_norm = cand_resid_norm
             best_slack_norm = cand_slack
+            best_feasible   = cand_feasible
             W_best     = {a: W_new[a].copy() for a in tx_idx}
             best_iter  = n_iter + 1
             best_sens  = sens_val
@@ -1243,6 +1351,7 @@ def solve_cordis_admm(
         if verbose:
             print(f"  [ADMM {n_iter+1:2d}]  r_pri={r_pri:.3e}  r_dual={r_dual:.3e}  "
                   f"minSINR={lin2db(sinr_vec.min()):+.2f}dB  "
+                  f"feas={cand_feasible}  "
                   f"maxSlack={eps_new.max():.2e}  ξ={xi_cur:.2e}  "
                   f"maxν^sinr={nu_sinr.max():.2e}")
 
@@ -1255,16 +1364,15 @@ def solve_cordis_admm(
         Sigma_tilde_cur  = Sigma_tilde_new
 
         # ── Patience-based early stop (Stage 22b) ────────────────────────
-        # When the residual_norm best-iter criterion is in effect, the
-        # algorithm typically finds its lowest r_pri+r_dual iterate
-        # within ~100 outer iterations and then oscillates without
-        # further improvement.  Bail out when no new best iterate has
-        # been recorded for `early_stop_patience` consecutive iters,
-        # but only after `early_stop_min_iters` warmup and only if we
-        # already have a best iterate.  Set early_stop_patience=0 to
-        # disable.  No-op when best_iter_criterion="min_sinr".
+        # Bails out when no new best iterate has been recorded for
+        # `early_stop_patience` consecutive iters, after a warmup of
+        # `early_stop_min_iters`, and only if a best iterate exists.
+        # Applies to the residual-based criteria (residual_norm and
+        # feasible_then_residual); the legacy min_sinr criterion runs full
+        # n_max (its swing peaks make "no improvement" unreliable).  Set
+        # early_stop_patience=0 to disable.
         if (
-            best_iter_criterion == "residual_norm"
+            best_iter_criterion in ("residual_norm", "feasible_then_residual")
             and early_stop_patience > 0
             and best_iter > 0
             and (n_iter + 1) >= early_stop_min_iters
@@ -1290,12 +1398,12 @@ def solve_cordis_admm(
             if verbose:
                 print(f"  [ADMM] converged at iter {n_iter+1} "
                       f"(slack={slack_norm:.2e})")
-            # Stage 20: return W_best (highest min-SINR iterate seen) rather
-            # than W_cur (just-converged iterate).  In most cases these are
-            # the same — but if an earlier iterate had higher min-SINR with
-            # acceptable consensus, prefer it.  Falls back to W_cur if no
-            # iterate has been recorded as "best" yet (best_r_pri == inf).
-            W_return = W_best if best_r_pri < float("inf") else W_cur
+            # Return the best iterate recorded (per the active criterion)
+            # rather than the just-converged one; they coincide in the
+            # common case, but the best-iterate may have higher min-SINR
+            # (feasible_then_residual) or tighter consensus.  Falls back to
+            # W_cur if no iterate was ever recorded as best.
+            W_return = W_best if best_iter > 0 else W_cur
             return ADMMResult(
                 W_tx=W_return,
                 primal_res_history=prim_hist,
@@ -1320,14 +1428,15 @@ def solve_cordis_admm(
                       f"iterations with inner failures")
             break
 
-    # ── Non-converged exit: return BEST iterate (lowest r_pri seen) ──────
-    # At infeasible γ, the last iterate is typically the most drifted; the
-    # smallest-r_pri iterate is the closest to a feasible consensus.  At
-    # feasible γ, both are identical (final iter = best).
-    if best_r_pri < float("inf"):
+    # ── Non-converged exit: return BEST iterate ──────────────────────────
+    # Under feasible_then_residual this is the best feasible incumbent (or
+    # lowest-residual iterate if none was feasible); under residual_norm the
+    # lowest-residual iterate; under min_sinr the highest-min-SINR iterate.
+    if best_iter > 0:
         if verbose:
             print(f"  [ADMM] no convergence — returning best iterate "
-                  f"({best_iter}/{len(prim_hist)}, r_pri={best_r_pri:.3e})")
+                  f"({best_iter}/{len(prim_hist)}, r_pri={best_r_pri:.3e}, "
+                  f"feasible={best_feasible})")
         return ADMMResult(
             W_tx=W_best,
             primal_res_history=prim_hist,

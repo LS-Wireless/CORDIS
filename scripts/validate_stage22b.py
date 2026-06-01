@@ -262,13 +262,14 @@ def test_09_patience_only_residual_norm():
     src = (REPO_ROOT / "cordis" / "algorithms" / "joint_opt.py").read_text()
     # Find the early-stop block — it should test the criterion FIRST
     pattern = re.search(
-        r'best_iter_criterion\s*==\s*"residual_norm"\s*\n\s*'
+        r'best_iter_criterion\s+in\s+\(\s*"residual_norm",\s*'
+        r'"feasible_then_residual"\s*\)\s*\n\s*'
         r'and\s+early_stop_patience\s*>\s*0',
         src,
     )
     assert pattern is not None, (
-        "Patience-stop block must gate on "
-        "best_iter_criterion=='residual_norm' AND early_stop_patience>0"
+        "Patience-stop block must gate on best_iter_criterion in "
+        "('residual_norm', 'feasible_then_residual') AND early_stop_patience>0"
     )
     # And the early_stopped flag must be set on bail-out
     assert "early_stopped = True" in src, (
