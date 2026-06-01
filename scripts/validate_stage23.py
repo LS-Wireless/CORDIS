@@ -440,6 +440,38 @@ def test_16_imported_helpers():
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# Stage 23 follow-up — feasibility-gated early stop
+# ═════════════════════════════════════════════════════════════════════════════
+
+@_register("Test 17: patience early-stop is feasibility-gated "
+           "(the gate includes `and best_feasible`)")
+def test_17_early_stop_feasibility_gated():
+    src = _src()
+    # Isolate the early-stop `if (...)` guard and require `and best_feasible`
+    # inside it.  Without the gate, patience can fire on an early low-residual
+    # but still-infeasible iterate and return a sub-gamma beamformer.
+    m = re.search(
+        r'if\s*\(\s*\n\s*best_iter_criterion\s+in\s+\(\s*"residual_norm",\s*'
+        r'"feasible_then_residual"\s*\).*?\):',
+        src, re.S,
+    )
+    assert m is not None, (
+        "could not locate the patience early-stop `if (...)` guard"
+    )
+    block = m.group(0)
+    assert re.search(r'\band\s+best_feasible\b', block), (
+        "early-stop guard must include `and best_feasible` (Stage 23 "
+        "follow-up): the patience clock must not run while the incumbent is "
+        "infeasible, or it returns a sub-gamma iterate (the -9 dB failure "
+        "mode on the convergence trace)"
+    )
+    # sanity: the gate should NOT have lost the criterion restriction
+    assert "min_sinr" not in block, (
+        "the early-stop gate should not enable the legacy min_sinr criterion"
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Runner
 # ═════════════════════════════════════════════════════════════════════════════
 

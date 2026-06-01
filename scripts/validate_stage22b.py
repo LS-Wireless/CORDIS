@@ -67,7 +67,7 @@ def test_01_admm_config_fields():
     cfg = ADMMConfig()
     expected = {
         # adaptive ρ
-        "adaptive_rho":          True,
+        "adaptive_rho":          False,
         "rho_mu_balance":        10.0,
         "rho_tau":               1.5,
         "rho_max_factor":        3.0,
@@ -75,7 +75,7 @@ def test_01_admm_config_fields():
         "rho_adapt_warmup":      5,
         "rho_adapt_interval":    3,
         # early-stop
-        "early_stop_patience":   15,
+        "early_stop_patience":   30,
         "early_stop_min_iters":  30,
     }
     for name, expected_val in expected.items():
@@ -254,11 +254,11 @@ def test_08_instability_detector():
     )
 
 
-@_register("Test  9: patience-stop only fires under residual_norm criterion")
+@_register("Test  9: patience-stop only fires under residual-based criteria")
 def test_09_patience_only_residual_norm():
     """The legacy 'min_sinr' criterion is not designed for patience-stop
     (the best-iter changes too often).  Verify the source gates the
-    early-stop logic on best_iter_criterion == 'residual_norm'."""
+    early-stop logic on best_iter_criterion == ('feasible_then_residual' AND 'residual_norm')."""
     src = (REPO_ROOT / "cordis" / "algorithms" / "joint_opt.py").read_text()
     # Find the early-stop block — it should test the criterion FIRST
     pattern = re.search(

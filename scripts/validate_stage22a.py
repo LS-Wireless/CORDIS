@@ -91,18 +91,18 @@ def _grep_defaults_sh(varname: str) -> str:
     return m.group(1)
 
 
-@_register("Test  1: admm.n_max default bumped to 200 in both source-of-truth files")
+@_register("Test  1: admm.n_max default bumped to 250 in both source-of-truth files")
 def test_01_admm_n_max_bumped():
     json_n_max = _read_json_defaults()["algorithm"]["admm"]["n_max"]
     sh_n_max   = int(_grep_defaults_sh("ADMM_N_MAX"))
-    assert json_n_max == 200, (
-        f"default.json: algorithm.admm.n_max = {json_n_max}, want 200.  "
+    assert json_n_max == 250, (
+        f"default.json: algorithm.admm.n_max = {json_n_max}, want 250.  "
         f"Stage 22a bumps the iteration cap to give the dual variable ν_u "
         f"room to ramp up (50 was mid-ramp on the journal SOC-consensus "
         f"formulation)."
     )
-    assert sh_n_max == 200, (
-        f"_defaults.sh: ADMM_N_MAX = {sh_n_max}, want 200.  "
+    assert sh_n_max == 250, (
+        f"_defaults.sh: ADMM_N_MAX = {sh_n_max}, want 250.  "
         f"Recipes need this default to match default.json so "
         f"recipe→default diffs stay minimal."
     )
@@ -136,20 +136,20 @@ def test_03_n_trials_aligned():
     )
 
 
-@_register("Test  4: admm.best_iter_criterion default is 'residual_norm' in "
+@_register("Test  4: admm.best_iter_criterion default is 'feasible_then_residual' in "
            "both source-of-truth files")
 def test_04_best_iter_criterion_default():
     json_c = _read_json_defaults()["algorithm"]["admm"]["best_iter_criterion"]
     sh_c   = _grep_defaults_sh("ADMM_BEST_ITER_CRITERION")
-    assert json_c == "residual_norm", (
+    assert json_c == "feasible_then_residual", (
         f"default.json: best_iter_criterion = {json_c!r}, "
-        f"want 'residual_norm'.  Residual-based selection is robust to "
+        f"want 'feasible_then_residual'.  Residual-based selection is robust to "
         f"the late-iteration oscillation that min_sinr-based selection "
         f"falls for."
     )
-    assert sh_c == "residual_norm", (
+    assert sh_c == "feasible_then_residual", (
         f"_defaults.sh: ADMM_BEST_ITER_CRITERION = {sh_c!r}, "
-        f"want 'residual_norm'"
+        f"want 'feasible_then_residual'"
     )
 
 
@@ -197,7 +197,7 @@ def test_07_convergence_recipe_cleaned():
 # ═════════════════════════════════════════════════════════════════════════════
 
 @_register("Test  8: ADMMConfig dataclass has a best_iter_criterion field "
-           "defaulting to 'residual_norm'")
+           "defaulting to 'feasible_then_residual'")
 def test_08_admmconfig_field():
     tree = ast.parse(CONFIG_PY.read_text())
     admm_cls = next(
@@ -217,13 +217,13 @@ def test_08_admmconfig_field():
     )
     assert field is not None, (
         "ADMMConfig: missing best_iter_criterion field.  "
-        "Stage 22a adds it as a `str = \"residual_norm\"` field."
+        "Stage 22a adds it as a `str = \"feasible_then_residual\"` field."
     )
-    # Default must be the string literal "residual_norm".
+    # Default must be the string literal "feasible_then_residual".
     assert (isinstance(field.value, ast.Constant)
-            and field.value.value == "residual_norm"), (
+            and field.value.value == "feasible_then_residual"), (
         f"ADMMConfig.best_iter_criterion default must be the string "
-        f"'residual_norm', got: "
+        f"'feasible_then_residual', got: "
         f"{ast.unparse(field.value) if field.value else None}"
     )
 

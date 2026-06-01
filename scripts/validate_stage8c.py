@@ -358,6 +358,8 @@ def _smoke_config(base_cfg_path: Path, out_dir: Path) -> Path:
     its 300-second timeout.  This helper restores headroom by capping
     iters at 10 — still enough for the pipeline to exercise every
     code path without measuring algorithmic quality.
+
+    Stage 23 follow-up package raised the default ``admm.n_max`` from 200 → 250
     """
     cfg = json.loads(base_cfg_path.read_text())
     cfg.setdefault("algorithm", {}).setdefault("admm", {})["n_max"] = 10

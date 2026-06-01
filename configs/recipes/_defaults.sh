@@ -100,36 +100,39 @@ SPLIT_XI_PENALTY="${SPLIT_XI_PENALTY:-10000.0}"
 # ─── Algorithm — CORDIS-ADMM ─────────────────────────────────────────
 ADMM_KAPPA="${ADMM_KAPPA:-0.08}"
 ADMM_RHO="${ADMM_RHO:-1.0}"
-ADMM_N_MAX="${ADMM_N_MAX:-200}"
+ADMM_N_MAX="${ADMM_N_MAX:-250}"
 ADMM_EPS_PRI="${ADMM_EPS_PRI:-1.0}"   # auto-rho settles residuals near 1
 ADMM_EPS_DUAL="${ADMM_EPS_DUAL:-1.0}"  # auto-rho settles residuals near 1
 ADMM_XI_SLACK="${ADMM_XI_SLACK:-10000.0}"
 # Stage 22a: best-iterate selection criterion when ADMM hits n_max
-# without converging.  Allowed values: "residual_norm" (default, picks
+# without converging. Allowed values: "feasible_then_residual" (default, picks
+# the best (highest min-SINR) feasible iterate, falling back to smallest r_pri+r_dual,
+# "residual_norm" (previous default, changed in stage 23 follow-up package, picks
 # smallest r_pri+r_dual) | "min_sinr" (legacy, picks highest worst-user
 # SINR).  See ADMMConfig.best_iter_criterion docstring.
-ADMM_BEST_ITER_CRITERION="${ADMM_BEST_ITER_CRITERION:-residual_norm}"
+ADMM_BEST_ITER_CRITERION="${ADMM_BEST_ITER_CRITERION:-feasible_then_residual}"
 
 # ─── Algorithm — CORDIS-ADMM Stage 22b (adaptive ρ + patience stop) ──
 # Adaptive ρ (Boyd-Parikh-Chu 2011 §3.4.1).  Rebalances primal vs dual
 # residual by scaling rho within [rho_min_factor, rho_max_factor].
 # DELIBERATELY CONSERVATIVE: empirically rho scaled by ≥5× the input
 # value destabilises SCA, so the cap is 3× and the step τ=1.5 (gentler
-# than Boyd's 2.0).  Set ADMM_ADAPTIVE_RHO=false to fall back to the
-# fixed-ρ Stage 22a behaviour.
-ADMM_ADAPTIVE_RHO="${ADMM_ADAPTIVE_RHO:-true}"
+# than Boyd's 2.0).  The default is now false (fixed rho) from stage 23
+# follow-up; set true to re-enable the adaptive scheme.
+ADMM_ADAPTIVE_RHO="${ADMM_ADAPTIVE_RHO:-false}"
 ADMM_RHO_MU_BALANCE="${ADMM_RHO_MU_BALANCE:-10.0}"  # Boyd's μ imbalance threshold
 ADMM_RHO_TAU="${ADMM_RHO_TAU:-1.5}"                 # multiplicative step (≤2 for stability)
 ADMM_RHO_MAX_FACTOR="${ADMM_RHO_MAX_FACTOR:-3.0}"   # upper cap (½ the ~5× instability point)
 ADMM_RHO_MIN_FACTOR="${ADMM_RHO_MIN_FACTOR:-0.5}"   # lower floor
 ADMM_RHO_ADAPT_WARMUP="${ADMM_RHO_ADAPT_WARMUP:-5}" # iters before adapting (SCA settle)
 ADMM_RHO_ADAPT_INTERVAL="${ADMM_RHO_ADAPT_INTERVAL:-3}"  # cooldown between ρ changes
-# Patience-based early stopping (active only under residual_norm
-# criterion).  Bails out when no new best-iterate is found for
-# ADMM_EARLY_STOP_PATIENCE consecutive iters, after a warmup of
-# ADMM_EARLY_STOP_MIN_ITERS.  Set ADMM_EARLY_STOP_PATIENCE=0 to disable
-# (e.g. for the convergence-trace experiment that needs full n_max runs).
-ADMM_EARLY_STOP_PATIENCE="${ADMM_EARLY_STOP_PATIENCE:-15}"
+# Patience-based early stopping (active under residual-based
+# criteria; the patience clock starts once a feasible iterate is
+# found -- stage 23 follow-up).  Bails out when no new best-iterate
+# is found for ADMM_EARLY_STOP_PATIENCE consecutive iters, after a
+# warmup of ADMM_EARLY_STOP_MIN_ITERS.  Set ADMM_EARLY_STOP_PATIENCE=0
+# to disable (e.g. for the convergence-trace experiment that needs full n_max runs).
+ADMM_EARLY_STOP_PATIENCE="${ADMM_EARLY_STOP_PATIENCE:-30}"
 ADMM_EARLY_STOP_MIN_ITERS="${ADMM_EARLY_STOP_MIN_ITERS:-30}"
 
 # ─── Simulation ──────────────────────────────────────────────────────

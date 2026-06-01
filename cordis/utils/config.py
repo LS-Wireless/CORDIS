@@ -290,13 +290,13 @@ class ADMMConfig:
     """
 
     # ── Sensing objective ─────────────────────────────────────────────────
-    kappa: float = 1.0              # Clutter penalty κ ≥ 0 (eq. admm-linear-objective)
+    kappa: float = 0.1              # Clutter penalty κ ≥ 0 (eq. admm-linear-objective)
 
     # ── ADMM penalty ──────────────────────────────────────────────────────
     rho: float = 1.0                # ADMM penalty parameter ρ
 
     # ── Termination ───────────────────────────────────────────────────────
-    n_max: int = 50                 # Maximum ADMM iterations N_max
+    n_max: int = 250                 # Maximum ADMM iterations N_max
     eps_pri: float = 1.0            # Primal residual tolerance ε_pri
     eps_dual: float = 1.0           # Dual residual tolerance ε_dual
     # With the auto-balanced ρ (rho=1), the primal/dual residuals settle
@@ -323,7 +323,10 @@ class ADMMConfig:
     # primal/dual residual tolerances, it returns the best W seen so far.
     # Two criteria are supported for selecting "best":
     #
-    #   "residual_norm" (default):
+    #   "feasible_then_residual" (default):
+    #    Pick the feasible iterate with the smallest residual norm.
+    #
+    #   "residual_norm" (previous default):
     #       Pick the iterate with the smallest combined primal-plus-dual
     #       consensus residual.  Mathematically the most natural choice
     #       since these residuals measure how close the iterate is to
@@ -341,7 +344,7 @@ class ADMMConfig:
     #       oscillation region whose consensus is not actually tight,
     #       so the reported W can fail to deliver its claimed SINR in
     #       downstream evaluation.
-    best_iter_criterion: str = "residual_norm"
+    best_iter_criterion: str = "feasible_then_residual"
 
     # ── Adaptive ρ (Stage 22b) ────────────────────────────────────────────
     # Boyd-Parikh-Chu (2011) §3.4.1 adaptive penalty parameter scheme.
@@ -352,7 +355,7 @@ class ADMMConfig:
     # around W^(n) — empirically, scaling rho_admm by ≥5× the input
     # value destabilises the algorithm.  We cap at 3× and use τ=1.5
     # to creep up slowly.
-    adaptive_rho: bool = True
+    adaptive_rho: bool = False
     rho_mu_balance: float = 10.0
     rho_tau: float = 1.5
     rho_max_factor: float = 3.0
@@ -365,7 +368,7 @@ class ADMMConfig:
     # out when no new best iterate has been recorded for
     # `early_stop_patience` consecutive iterations, after a warmup
     # of `early_stop_min_iters`.  Set patience=0 to disable.
-    early_stop_patience: int = 15
+    early_stop_patience: int = 30
     early_stop_min_iters: int = 30
 
     # ── Solver ────────────────────────────────────────────────────────────
@@ -1191,22 +1194,24 @@ PARAM_REGISTRY: Dict[str, Dict[str, str]] = {
         "range": "{CLARABEL|GUROBI|MOSEK|SCS}",
     },
     "algorithm.admm.best_iter_criterion": {
-        "help":  ("Criterion for selecting the 'best iterate' returned by "
-                  "solve_cordis_admm.  'residual_norm' (default) picks the "
-                  "iterate that minimises r_pri + r_dual (the converged "
-                  "plateau).  'min_sinr' picks the iterate with the highest "
-                  "min-user SINR (legacy behaviour; may pick a swing peak "
-                  "in non-converged trajectories).  See Stage 22a."),
+        "help":  ("'feasible_then_residual' (default) returns the best feasible iterate "
+                  "(highest min-SINR among iterates meeting gamma for every user), falling back "
+                  "to the lowest r_pri+r_dual iterate when none are feasible, and never "
+                  "downgrades a feasible incumbent. 'residual_norm' picks the iterate "
+                  "minimising r_pri+r_dual (the converged plateau). 'min_sinr' picks the "
+                  "highest min-user SINR (legacy; may pick a swing peak in non-converged "
+                  "trajectories). See Stage 22a / 23a."),
         "unit":  "-",
-        "range": "{residual_norm|min_sinr}",
+        "range": "{residual_norm|min_sinr|feasible_then_residual}",
     },
 
     "algorithm.admm.adaptive_rho": {
-        "help":  ("Enable Boyd-Parikh-Chu (2011) §3.4.1 adaptive ρ scheme. "
-                  "Rebalances primal vs dual residual by scaling rho_admm "
-                  "within [rho_min_factor, rho_max_factor]. Designed "
-                  "conservatively against SCA destabilisation (empirically: "
-                  "rho_admm scaled by ≥5× the input diverges). Stage 22b."),
+        "help":  ("Enable the Boyd-Parikh-Chu (2011) Sec.3.4.1 adaptive rho scheme (rebalances "
+                  "primal vs dual residual within [rho_min_factor, rho_max_factor]). DEFAULT "
+                  "OFF (Stage 23 follow-up): in this SCA-in-the-loop ADMM the rho changes "
+                  "perturb the err-tangent trust region and were empirically destabilising "
+                  "(residuals swing, slower/no convergence within n_max), while the always-on "
+                  "auto-rho scaling already balances the problem. Set true to re-enable. Stage 22b."),
         "unit":  "-",
         "range": "{true|false}",
     },
@@ -1254,13 +1259,14 @@ PARAM_REGISTRY: Dict[str, Dict[str, str]] = {
         "range": ">= 1 (typical: 2–5)",
     },
     "algorithm.admm.early_stop_patience": {
-        "help":  ("Patience for early stop (in iterations).  Bails out "
-                  "of the ADMM loop if no new 'best iterate' has been "
-                  "recorded for this many consecutive iterations.  "
-                  "Active only under best_iter_criterion='residual_norm'. "
-                  "Set to 0 to disable."),
+        "help":  ("Patience for early stop (iterations). Bails out when no new best iterate has "
+                  "been recorded for this many consecutive iters. Active under the "
+                  "residual-based criteria (residual_norm, feasible_then_residual); the patience "
+                  "clock starts only once a FEASIBLE incumbent exists (Stage 23 follow-up "
+                  "feasibility gate), so it never stops on a sub-gamma iterate. Set 0 to disable "
+                  "(e.g. the convergence-trace experiment)."),
         "unit":  "iters",
-        "range": ">= 0 (0 disables; typical: 10–20)",
+        "range": ">= 0 (0 disables; typical: 10–30)",
     },
     "algorithm.admm.early_stop_min_iters": {
         "help":  ("Warmup before patience-stop can fire.  Protects "

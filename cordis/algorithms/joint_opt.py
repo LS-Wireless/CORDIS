@@ -1363,7 +1363,8 @@ def solve_cordis_admm(
         nu_cur           = nu_new
         Sigma_tilde_cur  = Sigma_tilde_new
 
-        # ── Patience-based early stop (Stage 22b) ────────────────────────
+        # ── Patience-based early stop (Stage 22b; feasibility-gated in the
+        #    Stage 23 follow-up) ────────────────────────────────────────────
         # Bails out when no new best iterate has been recorded for
         # `early_stop_patience` consecutive iters, after a warmup of
         # `early_stop_min_iters`, and only if a best iterate exists.
@@ -1371,10 +1372,22 @@ def solve_cordis_admm(
         # feasible_then_residual); the legacy min_sinr criterion runs full
         # n_max (its swing peaks make "no improvement" unreliable).  Set
         # early_stop_patience=0 to disable.
+        #
+        # FEASIBILITY GATE (`and best_feasible`): the patience clock only runs
+        # once we hold a FEASIBLE incumbent.  Without it, the residual reaches
+        # a local minimum early (consensus momentarily tight) while min-SINR is
+        # still far below γ, so patience would fire on that early low-residual
+        # iterate and return a sub-γ beamformer.  The residual and the SINR
+        # feasibility converge on very different timescales (feasibility is
+        # reached much later), so gating on feasibility is essential: fast
+        # trials still stop early once feasible, slow trials run until feasible,
+        # and genuinely-infeasible trials run the full n_max (correctly flagged
+        # rather than early-stopped into a bad iterate).
         if (
             best_iter_criterion in ("residual_norm", "feasible_then_residual")
             and early_stop_patience > 0
             and best_iter > 0
+            and best_feasible
             and (n_iter + 1) >= early_stop_min_iters
         ):
             iters_since_best = (n_iter + 1) - best_iter
