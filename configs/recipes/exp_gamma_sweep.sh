@@ -25,7 +25,7 @@ fi
 # ─── OVERRIDES — edit these ──────────────────────────────────────────
 NAME="exp_gamma_sweep"
 N_TRIALS=100    # Smaller than CDF — many sweep points
-SPLIT_GAMMA_DB=10.0    # Baseline; sweep overrides at runtime
+GAMMA_DB=5.0    # Baseline; sweep overrides at runtime
 
 # ─── Defaults for everything else ────────────────────────────────────
 source "$SCRIPT_DIR/_defaults.sh"

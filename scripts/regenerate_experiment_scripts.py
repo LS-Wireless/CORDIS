@@ -109,7 +109,7 @@ plt.close(fig)
         "default_n_real":  2,
         "recipe_overrides": [
             ("N_TRIALS",   "100",  "Smaller than CDF — many sweep points"),
-            ("SPLIT_GAMMA_DB", "10.0", "Baseline; sweep overrides at runtime"),
+            ("GAMMA_DB", "5.0", "Baseline; sweep overrides at runtime"),
         ],
         "sweep_cli": [
             ("--gamma-values", "str", "''",
@@ -139,7 +139,7 @@ plt.close(fig)
         "default_n_real":  2,
         "recipe_overrides": [
             ("N_TRIALS",   "100", ""),
-            ("ADMM_KAPPA", "1.0", "Baseline; sweep overrides at runtime"),
+            ("ADMM_KAPPA", "0.08", "Baseline; sweep overrides at runtime"),
         ],
         "sweep_cli": [
             ("--kappa-values", "str", "''",
@@ -170,7 +170,7 @@ plt.close(fig)
         "recipe_overrides": [
             ("N_TRIALS",                "100", ""),
             ("CLUTTER_CNR_DB",          "-10.0", "Baseline; swept at runtime"),
-            ("CLUTTER_CENTER_STRATEGY", '"target_centroid"',
+            ("CLUTTER_CENTER_STRATEGY", '"offset"',
              "Default placement; switch to offset to decouple geometry"),
         ],
         "sweep_cli": [
@@ -293,7 +293,7 @@ plt.close(fig)
         "default_n_real":  2,
         "recipe_overrides": [
             ("N_TRIALS", "100", ""),
-            ("N_AP",     "6",   "Baseline; swept at runtime"),
+            ("N_AP",     "10",   "Baseline; swept at runtime"),
         ],
         "sweep_cli": [
             ("--n-ap-values", "str", "''",
@@ -323,8 +323,6 @@ plt.close(fig)
         "default_n_real":  2,
         "recipe_overrides": [
             ("N_TRIALS", "100", ""),
-            # ("N_ANT",    "10",  "Baseline; swept at runtime"),
-            # ("N_RF_CHAINS", "10", "Matches N_ANT"),
         ],
         "sweep_cli": [
             ("--n-ant-values", "str", "''",

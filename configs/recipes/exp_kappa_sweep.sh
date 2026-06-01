@@ -25,7 +25,7 @@ fi
 # ─── OVERRIDES — edit these ──────────────────────────────────────────
 NAME="exp_kappa_sweep"
 N_TRIALS=100
-ADMM_KAPPA=1.0    # Baseline; sweep overrides at runtime
+ADMM_KAPPA=0.08    # Baseline; sweep overrides at runtime
 
 # ─── Defaults for everything else ────────────────────────────────────
 source "$SCRIPT_DIR/_defaults.sh"

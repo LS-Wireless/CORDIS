@@ -1,0 +1,19 @@
+{
+  "topology": {
+    "n_ap": 6,
+    "n_ant": 10,
+    "n_rf_chains": 10
+  },
+  "channel": {
+    "pilot_power_db": 120.0
+  },
+  "sensing": {
+    "clutter_center_strategy": "target_centroid"
+  },
+  "algorithm": {
+    "admm": {
+      "kappa": 1.0
+    }
+  }
+}
+

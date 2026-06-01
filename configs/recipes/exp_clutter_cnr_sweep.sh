@@ -26,7 +26,7 @@ fi
 NAME="exp_clutter_cnr_sweep"
 N_TRIALS=100
 CLUTTER_CNR_DB=-10.0    # Baseline; swept at runtime
-CLUTTER_CENTER_STRATEGY="target_centroid"    # Default placement; switch to offset to decouple geometry
+CLUTTER_CENTER_STRATEGY="offset"    # Default placement; switch to offset to decouple geometry
 
 # ─── Defaults for everything else ────────────────────────────────────
 source "$SCRIPT_DIR/_defaults.sh"

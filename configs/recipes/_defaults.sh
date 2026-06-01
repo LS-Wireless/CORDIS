@@ -39,11 +39,11 @@ NAME="${NAME:-exp_unnamed}"
 
 # ─── Topology ────────────────────────────────────────────────────────
 TOPOLOGY_TYPE="${TOPOLOGY_TYPE:-circle}"
-N_AP="${N_AP:-6}"
+N_AP="${N_AP:-10}"
 N_UE="${N_UE:-4}"
 N_TARGETS="${N_TARGETS:-2}"
-N_ANT="${N_ANT:-10}"
-N_RF_CHAINS="${N_RF_CHAINS:-10}"
+N_ANT="${N_ANT:-16}"
+N_RF_CHAINS="${N_RF_CHAINS:-16}"
 ARRAY_TYPE="${ARRAY_TYPE:-UCA}"
 ANTENNA_SPACING_FACTOR="${ANTENNA_SPACING_FACTOR:-0.5}"
 N_SENSING_RX="${N_SENSING_RX:-1}"
@@ -62,7 +62,7 @@ BANDWIDTH_MHZ="${BANDWIDTH_MHZ:-20.0}"
 
 # ─── Channel ─────────────────────────────────────────────────────────
 SNR_DB="${SNR_DB:-137.0}"        # ≈ 20 W per AP at B=20 MHz, NF=7 dB
-PILOT_POWER_DB="${PILOT_POWER_DB:-120.0}"
+PILOT_POWER_DB="${PILOT_POWER_DB:-128.0}"
 TAU_P="${TAU_P:-10}"
 ESTIMATION_METHOD="${ESTIMATION_METHOD:-MMSE}"
 RICIAN_K_DB_MEAN="${RICIAN_K_DB_MEAN:-9.0}"
@@ -81,7 +81,7 @@ N_SNAPSHOTS="${N_SNAPSHOTS:-20}"
 CLUTTER_CNR_DB="${CLUTTER_CNR_DB:--10.0}"
 SIGMA_CLT="${SIGMA_CLT:-null}"
 CLUTTER_AS_DEG="${CLUTTER_AS_DEG:-15.0}"
-CLUTTER_CENTER_STRATEGY="${CLUTTER_CENTER_STRATEGY:-target_centroid}"
+CLUTTER_CENTER_STRATEGY="${CLUTTER_CENTER_STRATEGY:-offset}"
 CLUTTER_OFFSET_AZ_DEG="${CLUTTER_OFFSET_AZ_DEG:-60.0}"
 LOS_MODEL="${LOS_MODEL:-always}"  # paper assumes s_t=1 (rank-1 LoS target model)
 LOS_PROBABILITY_OVERRIDE="${LOS_PROBABILITY_OVERRIDE:-null}"
@@ -98,7 +98,7 @@ SPLIT_KAPPA="${SPLIT_KAPPA:-1.0}"
 SPLIT_XI_PENALTY="${SPLIT_XI_PENALTY:-10000.0}"
 
 # ─── Algorithm — CORDIS-ADMM ─────────────────────────────────────────
-ADMM_KAPPA="${ADMM_KAPPA:-1.0}"
+ADMM_KAPPA="${ADMM_KAPPA:-0.08}"
 ADMM_RHO="${ADMM_RHO:-1.0}"
 ADMM_N_MAX="${ADMM_N_MAX:-200}"
 ADMM_EPS_PRI="${ADMM_EPS_PRI:-1.0}"   # auto-rho settles residuals near 1

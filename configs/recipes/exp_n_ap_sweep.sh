@@ -25,7 +25,7 @@ fi
 # ─── OVERRIDES — edit these ──────────────────────────────────────────
 NAME="exp_n_ap_sweep"
 N_TRIALS=100
-N_AP=6    # Baseline; swept at runtime
+N_AP=10    # Baseline; swept at runtime
 
 # ─── Defaults for everything else ────────────────────────────────────
 source "$SCRIPT_DIR/_defaults.sh"
