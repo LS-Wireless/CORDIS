@@ -150,6 +150,8 @@ figures/playground/
 # Topology dev runs (the committed figures/examples/topology/ is unaffected)
 figures/topology/
 
+tests/*.npy
+tests/*.npz
 
 # =============================================================================
 # 6. CORDIS config files — what to keep vs. ignore

@@ -84,6 +84,7 @@ SUBVALIDATORS: List[Tuple[str, str]] = [
     ("22a", "validate_stage22a.py"),
     ("22b", "validate_stage22b.py"),
     ("23", "validate_stage23.py"),
+    ("24", "validate_stage24.py"),
 ]
 
 

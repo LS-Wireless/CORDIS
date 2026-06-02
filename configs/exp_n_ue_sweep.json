@@ -6,6 +6,8 @@
     "ue_min_radius_m": 35.0,
     "tg_max_radius_m": 1000.0,
     "tg_min_radius_m": 35.0,
+    "ue_min_separation_m": 0.0,
+    "ue_target_min_separation_m": 0.0,
     "n_ap": 10,
     "n_ue": 4,
     "n_targets": 2,

@@ -31,6 +31,14 @@ Both UEs and targets are drawn uniformly at random inside an annulus
 [``min_radius_m``, ``max_radius_m``] to enforce a minimum separation from
 the origin (which often coincides with a cluster of APs).
 
+Optionally (Stage 24), a minimum *pairwise* separation can be enforced via
+``ue_min_separation_m`` (UE↔UE) and ``ue_target_min_separation_m``
+(UE↔target).  When either is > 0 the corresponding entity is placed by
+rejection sampling (:func:`_uniform_annulus_min_sep`); when both are 0 — the
+default — :func:`generate_topology` calls the original area-uniform sampler
+:func:`_uniform_annulus` unchanged, so the RNG draw pattern (and every
+previously-generated topology for a given seed) is byte-for-byte identical.
+
 AP mode assignment
 ------------------
 Transmit APs (``At``) and receive APs (``Ar``) are selected by the
@@ -580,6 +588,104 @@ def _uniform_annulus(
     return np.column_stack([x, y, z])   # (n, 3)
 
 
+def _uniform_annulus_min_sep(
+    rng: np.random.Generator,
+    n: int,
+    r_min: float,
+    r_max: float,
+    height: float,
+    *,
+    self_min_dist: float = 0.0,
+    avoid_xy: Optional[NDArray[np.float64]] = None,
+    avoid_min_dist: float = 0.0,
+    max_attempts_per_point: int = 10000,
+) -> NDArray[np.float64]:
+    """
+    Draw ``n`` points uniformly inside an annulus [r_min, r_max] at the given
+    ``height``, subject to optional minimum-separation constraints (Stage 24).
+
+    Points are placed sequentially by rejection sampling:
+
+      * ``self_min_dist`` : minimum 2-D distance between any two of the ``n``
+        points placed here (e.g. the UE↔UE separation).
+      * ``avoid_xy`` / ``avoid_min_dist`` : minimum 2-D distance from each
+        placed point to every position in ``avoid_xy`` (shape (m, 2) or
+        (m, 3); only x, y are used) — e.g. the UE↔target separation enforced
+        from the target side.
+
+    Each candidate uses the same area-uniform polar draw as
+    :func:`_uniform_annulus` (``r = sqrt(U[r_min^2, r_max^2])``,
+    ``phi = U[0, 2π)``), so the marginal placement density matches the
+    unconstrained sampler.  Only the per-point draw ORDER differs from
+    :func:`_uniform_annulus` (which draws all radii then all angles), which is
+    exactly why :func:`generate_topology` keeps calling
+    :func:`_uniform_annulus` directly when no separation is requested — see
+    the branch there — so existing seeds reproduce identical topologies.
+
+    Raises
+    ------
+    ValueError
+        If ``r_max <= r_min``; if ``self_min_dist`` is too large to pack ``n``
+        points into the annulus (cheap area pre-check); or if any point cannot
+        be placed within ``max_attempts_per_point`` attempts (the constraints
+        are too tight for the available area).
+    """
+    if r_max <= r_min:
+        raise ValueError(f"r_max ({r_max}) must be > r_min ({r_min}).")
+    if n == 0:
+        return np.zeros((0, 3), dtype=float)
+
+    # Cheap up-front feasibility guard for the self-separation constraint.
+    # Sequential rejection sampling jams well below the optimal circle-packing
+    # density (the random-sequential-adsorption limit for disks is ~0.55), so
+    # we refuse early if the exclusion disks (radius self_min_dist/2) would need
+    # more than ~50 % of the annulus area — beyond that, placement stalls.
+    if self_min_dist > 0.0 and n > 1:
+        annulus_area = np.pi * (r_max ** 2 - r_min ** 2)
+        excl_area = n * np.pi * (self_min_dist / 2.0) ** 2
+        if excl_area > 0.5 * annulus_area:
+            raise ValueError(
+                f"self_min_dist={self_min_dist} m is too large to place "
+                f"{n} points in the annulus [{r_min}, {r_max}] m "
+                f"(needs ~{excl_area:.0f} m^2 of {annulus_area:.0f} m^2 "
+                f"available; rejection sampling jams above ~50%). "
+                f"Reduce the separation or widen the annulus."
+            )
+
+    avoid = None
+    if avoid_xy is not None and avoid_min_dist > 0.0 and len(avoid_xy) > 0:
+        avoid = np.asarray(avoid_xy, dtype=float)[:, :2]
+
+    placed = np.empty((n, 2), dtype=float)
+    for i in range(n):
+        for _attempt in range(max_attempts_per_point):
+            r = float(np.sqrt(rng.uniform(r_min ** 2, r_max ** 2)))
+            phi = float(rng.uniform(0.0, 2.0 * np.pi))
+            cand = np.array([r * np.cos(phi), r * np.sin(phi)])
+
+            if self_min_dist > 0.0 and i > 0:
+                if np.min(np.linalg.norm(placed[:i] - cand, axis=1)) < self_min_dist:
+                    continue
+            if avoid is not None:
+                if np.min(np.linalg.norm(avoid - cand, axis=1)) < avoid_min_dist:
+                    continue
+
+            placed[i] = cand
+            break
+        else:
+            raise ValueError(
+                f"Could not place point {i + 1}/{n} within "
+                f"{max_attempts_per_point} attempts "
+                f"(self_min_dist={self_min_dist} m, avoid_min_dist="
+                f"{avoid_min_dist} m, annulus [{r_min}, {r_max}] m). "
+                f"The separation constraints are too tight for the available "
+                f"area; reduce them or widen the annulus."
+            )
+
+    z = np.full(n, height, dtype=float)
+    return np.column_stack([placed[:, 0], placed[:, 1], z])   # (n, 3)
+
+
 def _circle_layout(
     n: int,
     radius: float,
@@ -722,18 +828,39 @@ def generate_topology(
     ]
 
     # ── UE positions ──────────────────────────────────────────────────────
-    ue_pos_arr = _uniform_annulus(
-        rng, t.n_ue, t.ue_min_radius_m, t.ue_max_radius_m, t.h_ue_m
-    )
+    # Stage 24: optional minimum UE↔UE separation.  When 0 (the default) we
+    # call the original area-uniform sampler so the RNG draw pattern — and
+    # every previously-generated topology for a given seed — is byte-for-byte
+    # unchanged.  Only a positive separation switches to the rejection sampler.
+    ue_min_sep = float(getattr(t, "ue_min_separation_m", 0.0))
+    if ue_min_sep <= 0.0:
+        ue_pos_arr = _uniform_annulus(
+            rng, t.n_ue, t.ue_min_radius_m, t.ue_max_radius_m, t.h_ue_m
+        )
+    else:
+        ue_pos_arr = _uniform_annulus_min_sep(
+            rng, t.n_ue, t.ue_min_radius_m, t.ue_max_radius_m, t.h_ue_m,
+            self_min_dist=ue_min_sep,
+        )
     ues = [
         UserEquipment(idx=u, pos=ue_pos_arr[u])
         for u in range(t.n_ue)
     ]
 
     # ── Target positions ──────────────────────────────────────────────────
-    tg_pos_arr = _uniform_annulus(
-        rng, t.n_targets, t.tg_min_radius_m, t.tg_max_radius_m, t.h_tg_m
-    )
+    # Stage 24: optional minimum UE↔target separation, enforced from the
+    # target side (targets avoid the already-placed UEs).  Same backward-compat
+    # branch: 0 (the default) keeps the original sampler and RNG pattern.
+    ue_tg_min_sep = float(getattr(t, "ue_target_min_separation_m", 0.0))
+    if ue_tg_min_sep <= 0.0:
+        tg_pos_arr = _uniform_annulus(
+            rng, t.n_targets, t.tg_min_radius_m, t.tg_max_radius_m, t.h_tg_m
+        )
+    else:
+        tg_pos_arr = _uniform_annulus_min_sep(
+            rng, t.n_targets, t.tg_min_radius_m, t.tg_max_radius_m, t.h_tg_m,
+            avoid_xy=ue_pos_arr[:, :2], avoid_min_dist=ue_tg_min_sep,
+        )
     targets = [
         SensingTarget(idx=j, pos=tg_pos_arr[j])
         for j in range(t.n_targets)

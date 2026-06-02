@@ -5,6 +5,8 @@ topology.ue_max_radius_m,float,1000.0,m,> ue_min_radius_m,Outer radius of the an
 topology.ue_min_radius_m,float,35.0,m,>= 0,Inner radius of the UE placement annulus (minimum UE-origin distance)
 topology.tg_max_radius_m,float,1000.0,m,> tg_min_radius_m,Outer radius of the annulus in which targets are dropped
 topology.tg_min_radius_m,float,35.0,m,>= 0,Inner radius of the target placement annulus
+topology.ue_min_separation_m,float,0.0,m,>= 0 (0 disables),"Minimum 2-D distance between any two UEs (Stage 24). 0 disables (default), preserving the original area-uniform draw and existing seeds; a positive value enables a rejection sampler that re-draws UEs until all pairwise distances clear the threshold."
+topology.ue_target_min_separation_m,float,0.0,m,>= 0 (0 disables),Minimum 2-D distance between any UE and any target (Stage 24). 0 disables (default); a positive value places targets via a rejection sampler that avoids the already-placed UEs.
 topology.n_ap,int,6,-,>= 2,Total number of APs (|A| = |A_t| + |A_r|)
 topology.n_ue,int,4,-,>= 1,Number of single-antenna communication users (N_ue)
 topology.n_targets,int,1,-,>= 1,Number of sensing targets (N_t)

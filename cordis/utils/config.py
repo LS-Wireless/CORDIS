@@ -60,6 +60,12 @@ class TopologyConfig:
     tg_max_radius_m: float = 1000.0 # Max target placement radius [m]
     tg_min_radius_m: float = 35.0   # Min target placement radius [m]
 
+    # Minimum pairwise separation (Stage 24).  0.0 disables (default),
+    # preserving the original area-uniform draw and every existing seed's
+    # topology; a positive value switches that entity to a rejection sampler.
+    ue_min_separation_m: float = 0.0  # min UE-UE 2-D distance [m]
+    ue_target_min_separation_m: float = 0.0  # min UE-target 2-D distance [m]
+
     # Network dimensions
     n_ap: int = 6                   # Total number of APs
     n_ue: int = 4                   # Number of communication UEs
@@ -524,6 +530,10 @@ class CORDISConfig:
                 f"antenna_spacing_factor must be in (0, 1]; "
                 f"got {t.antenna_spacing_factor}."
             )
+        if t.ue_min_separation_m < 0:
+            raise ValueError("topology.ue_min_separation_m must be >= 0.")
+        if t.ue_target_min_separation_m < 0:
+            raise ValueError("topology.ue_target_min_separation_m must be >= 0.")
         if self.algorithm.admm.kappa < 0:
             raise ValueError("admm.kappa (clutter penalty) must be ≥ 0.")
         if self.algorithm.split.kappa < 0:
@@ -775,6 +785,21 @@ PARAM_REGISTRY: Dict[str, Dict[str, str]] = {
         "help":  "Inner radius of the target placement annulus",
         "unit":  "m",
         "range": ">= 0",
+    },
+    "topology.ue_min_separation_m": {
+        "help":  ("Minimum 2-D distance between any two UEs (Stage 24). 0 disables "
+                  "(default), preserving the original area-uniform draw and existing "
+                  "seeds; a positive value enables a rejection sampler that re-draws "
+                  "UEs until all pairwise distances clear the threshold."),
+        "unit":  "m",
+        "range": ">= 0 (0 disables)",
+    },
+    "topology.ue_target_min_separation_m": {
+        "help":  ("Minimum 2-D distance between any UE and any target (Stage 24). 0 "
+                  "disables (default); a positive value places targets via a rejection "
+                  "sampler that avoids the already-placed UEs."),
+        "unit":  "m",
+        "range": ">= 0 (0 disables)",
     },
     "topology.n_ap": {
         "help":  "Total number of APs (|A| = |A_t| + |A_r|)",
