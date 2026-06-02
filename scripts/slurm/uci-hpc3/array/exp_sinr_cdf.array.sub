@@ -30,11 +30,11 @@
 #SBATCH --job-name=cordis-sinr_cdf-array
 #SBATCH --output=logs/slurm/sinr_cdf-array-%A_%a.out
 #SBATCH --error=logs/slurm/sinr_cdf-array-%A_%a.err
-#SBATCH --time=06:00:00
-#SBATCH --cpus-per-task=40
+#SBATCH --time=04:00:00
+#SBATCH --cpus-per-task=16
 #SBATCH --array=0-19
 #SBATCH --partition=standard
-#SBATCH --account=swindle_lab
+#SBATCH --account=mzafarid
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=mzafarid@uci.edu
 # NOTE: the directives above (time / cpus / array range / partition /

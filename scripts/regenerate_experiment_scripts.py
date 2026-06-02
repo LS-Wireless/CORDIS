@@ -754,10 +754,11 @@ SLURM_DEFAULTS_BY_KIND: Dict[str, Dict[str, str]] = {
 # wall time.  4h is more than enough for the default 10 tasks but
 # allows headroom if the user bumps N_TRIALS or shrinks N_ARRAY_TASKS.
 SLURM_ARRAY_DEFAULTS = {
-    "array_time":         "06:00:00",
-    "cpus":               "40",
+    "array_time":         "04:00:00",
+    "cpus":               "16",         # Use these values: 8, 16, 32, 40
     "default_n_tasks":    20,
-    "default_array_last": 19,    # zero-indexed → 0-9 means 10 tasks
+    "default_array_last": 19,           # zero-indexed → 0-9 means 10 tasks
+    "array_account":      "mzafarid",   # either 'mzafarid' or 'swindle_lab' for UCI HPC3
 }
 
 SLURM_TEMPLATE = """\
@@ -1138,7 +1139,7 @@ UCI_HPC3_ARRAY_SUB_TEMPLATE = """\
 #SBATCH --cpus-per-task={cpus}
 #SBATCH --array=0-{default_array_last}
 #SBATCH --partition=standard
-#SBATCH --account=swindle_lab
+#SBATCH --account={array_account}
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=mzafarid@uci.edu
 # NOTE: the directives above (time / cpus / array range / partition /
@@ -1406,6 +1407,7 @@ def render_files(name: str, meta: Dict[str, Any]) -> Dict[Path, str]:
                 cpus=SLURM_ARRAY_DEFAULTS["cpus"],
                 default_n_tasks=SLURM_ARRAY_DEFAULTS["default_n_tasks"],
                 default_array_last=SLURM_ARRAY_DEFAULTS["default_array_last"],
+                array_account=SLURM_ARRAY_DEFAULTS["array_account"],
             )
         )
 

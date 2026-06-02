@@ -153,6 +153,24 @@ figures/topology/
 tests/*.npy
 tests/*.npz
 
+# Paper figure-builder hygiene (final PDFs in figures/ ARE committed)
+
+# Notebook & Python caches
+paper/**/.ipynb_checkpoints/
+paper/**/__pycache__/
+paper/*.pyc
+
+# PNG previews / scratch the builders emit alongside the PDFs
+paper/figures/*.png
+paper/figures/*.pdf
+!paper/figures/*_final.pdf
+paper/figure_src/**/*.png
+
+# Keep the committed trace anchors (small .npz behind each figure) — do NOT
+# ignore figure_src/**/data/.  If you'd rather regenerate them every time,
+# uncomment the next line:
+# figure_src/**/data/
+
 # =============================================================================
 # 6. CORDIS config files — what to keep vs. ignore
 # =============================================================================
