@@ -165,6 +165,9 @@ paper/figures/*.png
 paper/figures/*.pdf
 !paper/figures/*_final.pdf
 paper/figure_src/**/*.png
+paper/figures/*.md
+!paper/figures/*_final.md
+paper/figures/*.tex
 
 # Keep the committed trace anchors (small .npz behind each figure) — do NOT
 # ignore figure_src/**/data/.  If you'd rather regenerate them every time,

@@ -758,7 +758,7 @@ SLURM_ARRAY_DEFAULTS = {
     "cpus":               "16",         # Use these values: 8, 16, 32, 40
     "default_n_tasks":    20,
     "default_array_last": 19,           # zero-indexed → 0-9 means 10 tasks
-    "array_account":      "mzafarid",   # either 'mzafarid' or 'swindle_lab' for UCI HPC3
+    "array_account":      "swindle_lab",   # either 'mzafarid' or 'swindle_lab' for UCI HPC3
 }
 
 SLURM_TEMPLATE = """\
