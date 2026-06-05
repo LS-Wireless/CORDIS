@@ -1,18 +1,33 @@
-# Fig. — min-SINR CDF + SCNR CDF at γ\*
+# Fig. — SINR CDF + SCNR CDF at γ\*
 
 Two-panel empirical-CDF figure for the Simulation Results section, evaluated at
 the chosen operating point **γ\*** (the per-user SINR floor used across the
 paper's headline figures).
 
-- **(a) min-SINR CDF at γ\*** — empirical CDF of the per-trial worst-user SINR
-  for each algorithm, with a vertical dashed line at γ\*. The mass to the
-  **left** of γ\* is the per-user outage / infeasibility fraction; the legend
-  annotates each algorithm's infeasibility rate (`plot_cdf`'s Stage-20
-  feature). This is the worst-user communication-reliability story.
+- **(a) SINR CDF at γ\*** — empirical CDF of the per-trial SINR for each
+  algorithm, with a vertical dashed line at γ\*. The SINR metric is selectable
+  via `--sinr-metric`: `min` (worst-user, default) or `mean` (across users,
+  = `mean_sinr_db`). Each legend entry is annotated with the **moderate-outage**
+  feasibility scalar at γ\* (see below).
 - **(b) SCNR CDF at γ\*** — empirical CDF of the per-trial sensing SCNR at the
   **same** operating point. No γ line: γ\* is an SINR floor, not an SCNR target.
-  This panel shows the sensing performance you actually get once the
-  communication floor is being enforced at γ\*.
+
+### Feasibility / outage definition (moderate by default)
+
+The legend annotation and the summary's feasibility column use a selectable
+definition (`--feasibility`), following `cordis/metrics/outage.py`:
+
+- `served` (**default, moderate**) — served-trial rate: fraction of trials in
+  which at least η of users meet γ\* (`--eta`, default 0.9). Higher is better.
+- `outage` (moderate) — per-user outage probability Pr(SINR_u < γ\*) over the
+  (user, trial) pool (= the per-user SINR CDF read at γ\*). Lower is better.
+- `strict` (legacy) — fraction of trials whose chosen SINR metric < γ\*
+  (all-or-nothing; the old behaviour). Lower is better.
+
+The summary also reports the (1−ε)-likely per-user SINR (ε=0.05 → 95%-likely),
+the Björnson/cell-free convention. **Note:** the moderate metrics (`served`,
+`outage`) are computed on the per-user SINR pool and are therefore independent
+of the `--sinr-metric` choice, which only affects the plotted SINR curve.
 
 Both panels use the project-wide per-algorithm style (`style_for` /
 `ALGORITHM_STYLE`), so the same algorithm reads identically here and in

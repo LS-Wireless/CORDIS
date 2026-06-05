@@ -91,12 +91,34 @@ if str(REPO_ROOT) not in sys.path:
 # ceiling.  CDF experiments run with all_algorithms, so we filter down.
 PREFERRED: Tuple[str, ...] = ("Centralized", "CORDIS-ADMM", "CORDIS-Split")
 
-SINR_METRIC = "min_sinr_db"
+# SINR metric for panel (a): worst-user (min) or across-user (mean) per trial.
+# Both are real registry metrics (mean_sinr_db = dB of the per-trial mean over
+# users).  Switch with --sinr-metric {min,mean}.
+SINR_METRIC_CHOICES: Dict[str, Tuple[str, str]] = {
+    "min":  ("min_sinr_db",  "min-user SINR"),
+    "mean": ("mean_sinr_db", "mean-user SINR"),
+}
+SINR_METRIC_DEFAULT = "min"
+
+# How feasibility / outage at γ\* is reported (legend annotation + summary):
+#   served : MODERATE (default) — served-trial rate, the fraction of trials in
+#            which at least η of users meet γ\*  (drop-level relaxation).
+#   outage : MODERATE — per-user outage probability Pr(SINR_u < γ\*) over the
+#            (user, trial) pool  (= the per-user SINR CDF read at γ\*).
+#   strict : LEGACY — fraction of trials whose chosen SINR metric < γ\*
+#            (all-or-nothing; the old behaviour).
+# The moderate definitions follow cordis/metrics/outage.py and are the
+# operating point cell-free / massive-MIMO papers actually report.
+FEASIBILITY_DEFAULT = "served"
+ETA_DEFAULT = 0.9            # coverage fraction η for 'served'
+OUTAGE_EPS_DEFAULT = 0.05    # ε for the (1-ε)-likely per-user SINR in the summary
 
 # For the sensing panel, prefer the worst-target SCNR (the dual of the
 # worst-user SINR — both are "worst-case" CDFs, the cleanest pairing for the
-# one-target scenario in the draft).  Fall back through sum / mean if a run
-# doesn't carry it.  First metric the result actually has wins.
+# one-target scenario in the draft).  Fall back through the weighted target-SCNR
+# sum / mean if a run doesn't carry it.  First metric the result actually has
+# wins.  (There is no "sum_scnr_db" in the registry — the real sum is the
+# WEIGHTED target-SCNR sum Σ_t ω_t·SCNR_{a_r,t} = "weighted_sum_scnr_db".)
 SCNR_METRIC_PREFERENCE: Tuple[str, ...] = (
     "min_scnr_db",
     "weighted_sum_scnr_db",
@@ -108,9 +130,9 @@ SCNR_METRIC_PREFERENCE: Tuple[str, ...] = (
 GAMMA_DEFAULT_DB = 5.0
 
 _SCNR_XLABEL = {
-    "min_scnr_db": r"worst-target SCNR [dB]",
-    "weighted_sum_scnr_db": r"sum-SCNR [dB]",
-    "mean_scnr_db": r"mean SCNR [dB]",
+    "min_scnr_db": r"min-target SCNR [dB]",
+    "weighted_sum_scnr_db": r"weighted-sum SCNR [dB]",
+    "mean_scnr_db": r"mean-target SCNR [dB]",
 }
 
 
@@ -268,6 +290,79 @@ def _select_scnr_metric(result,
 
 
 # ─────────────────────────────────────────────────────────────────────
+#  SINR metric (min/mean) + moderate-outage feasibility helpers
+# ─────────────────────────────────────────────────────────────────────
+
+def _resolve_sinr_metric(key: str) -> Tuple[str, str]:
+    """Map a --sinr-metric key ('min'|'mean') to (registry_metric, label)."""
+    if key not in SINR_METRIC_CHOICES:
+        raise ValueError(f"--sinr-metric must be one of "
+                         f"{list(SINR_METRIC_CHOICES)}, got {key!r}.")
+    return SINR_METRIC_CHOICES[key]
+
+
+def _sinr_arrays(ar):
+    """(flat per-user SINR dB pool, per-trial×user SINR dB matrix) for one
+    algorithm, or (None, None) if it has no SINR statistics."""
+    st = getattr(ar, "sinr_stats", None)
+    if st is None:
+        return None, None
+    return (np.asarray(st.all_sinr_db_flat, dtype=np.float64),
+            np.asarray(st.sinr_per_trial_per_user_db, dtype=np.float64))
+
+
+def _feasibility_value(ar, gamma_db: float, mode: str, eta: float,
+                       sinr_metric: str):
+    """Scalar feasibility/outage at γ for one algorithm under ``mode``.
+
+    Returns ``(value, kind)`` with ``value`` a fraction in [0, 1] and
+    ``kind`` ∈ {'served','outage','infeas'}; ``served`` is higher-is-better,
+    the others lower-is-better.  ``None`` if it can't be computed.
+
+    'served'/'outage' use the moderate-outage functions in
+    cordis.metrics.outage; 'strict' uses the legacy infeasibility_rate.
+    """
+    from cordis.metrics import outage as _o  # lazy
+    flat, mat = _sinr_arrays(ar)
+    if mode == "served":
+        if mat is None or mat.size == 0:
+            return None
+        return float(_o.served_trial_rate(mat, gamma_db, eta=eta)), "served"
+    if mode == "outage":
+        if flat is None or flat.size == 0:
+            return None
+        return float(_o.outage_probability(flat, eta*gamma_db)), "outage"
+    if mode == "strict":
+        if not ar.has_metric(sinr_metric):
+            return None
+        return float(ar.infeasibility_rate(gamma_db, sinr_metric)), "infeas"
+    raise ValueError(f"Unknown feasibility mode {mode!r}.")
+
+
+def _feas_legend_token(value, kind, use_tex: bool):
+    """Short legend annotation, e.g. 'served 96%' / 'Pout 4%' / 'infeas 24%'."""
+    if value is None:
+        return None
+    pct = 100.0 * value
+    sym = r"\%" if use_tex else "%"     # '%' is a LaTeX comment char
+    if kind == "served":
+        return f"served {pct:.0f}{sym}"
+    if kind == "outage":
+        head = r"$P_{\rm out}$" if use_tex else "Pout"
+        return f"{head} {pct:.0f}{sym}"
+    return f"infeas {pct:.0f}{sym}"
+
+
+def _likely_sinr_db(ar, eps: float):
+    """(1-eps)-likely per-user SINR [dB] (Björnson/cell-free convention)."""
+    from cordis.metrics import outage as _o  # lazy
+    flat, _ = _sinr_arrays(ar)
+    if flat is None or flat.size == 0:
+        return None
+    return float(_o.likely_sinr_db(flat, eps))
+
+
+# ─────────────────────────────────────────────────────────────────────
 #  Numeric summary (printed to stdout + reusable in the notebook)
 # ─────────────────────────────────────────────────────────────────────
 
@@ -275,19 +370,33 @@ def collect_summary(sinr_result,
                     scnr_result,
                     gamma_db: float,
                     only: Sequence[str],
-                    scnr_metric: Optional[str]) -> Dict[str, Dict[str, float]]:
-    """Per-algorithm headline numbers for the caption / sanity check:
-    median & 5th-pct min-SINR, infeasibility at γ\\*, and median SCNR."""
+                    scnr_metric: Optional[str],
+                    *,
+                    sinr_metric: str = "min_sinr_db",
+                    feasibility: str = FEASIBILITY_DEFAULT,
+                    eta: float = ETA_DEFAULT,
+                    outage_eps: float = OUTAGE_EPS_DEFAULT) -> Dict[str, Dict[str, float]]:
+    """Per-algorithm headline numbers for the caption / sanity check: median &
+    5th-pct of the chosen SINR metric, the moderate-outage feasibility scalar
+    at γ\\* (served / outage / strict), the (1-ε)-likely per-user SINR, and the
+    median SCNR."""
     out: Dict[str, Dict[str, float]] = {}
     sinr_res = sinr_result.sim_result.algorithm_results
     scnr_res = scnr_result.sim_result.algorithm_results
     for name in only:
         row: Dict[str, float] = {}
         a = sinr_res.get(name)
-        if a is not None and a.has_metric(SINR_METRIC):
-            row["sinr_p50_db"] = a.percentile(SINR_METRIC, 50)
-            row["sinr_p05_db"] = a.percentile(SINR_METRIC, 5)
-            row["infeas_at_gamma"] = a.infeasibility_rate(gamma_db, SINR_METRIC)
+        if a is not None and a.has_metric(sinr_metric):
+            row["sinr_p50_db"] = a.percentile(sinr_metric, 50)
+            row["sinr_p05_db"] = a.percentile(sinr_metric, 5)
+        if a is not None:
+            fv = _feasibility_value(a, gamma_db, feasibility, eta, sinr_metric)
+            if fv is not None:
+                row["feas_value"] = fv[0]
+                row["feas_kind"] = fv[1]   # 'served' | 'outage' | 'infeas'
+            lk = _likely_sinr_db(a, outage_eps)
+            if lk is not None:
+                row["likely_sinr_db"] = lk
         b = scnr_res.get(name)
         if scnr_metric and b is not None and b.has_metric(scnr_metric):
             row["scnr_p50_db"] = b.percentile(scnr_metric, 50)
@@ -296,19 +405,32 @@ def collect_summary(sinr_result,
 
 
 def _print_summary(summary: Dict[str, Dict[str, float]],
-                   gamma_db: float, scnr_metric: Optional[str]) -> None:
+                   gamma_db: float, scnr_metric: Optional[str],
+                   *, sinr_label: str = "min-SINR",
+                   feasibility: str = FEASIBILITY_DEFAULT,
+                   eta: float = ETA_DEFAULT,
+                   outage_eps: float = OUTAGE_EPS_DEFAULT) -> None:
+    feas_hdr = {"served": f"served@γ*(η={eta:g})",
+                "outage": "Pout@γ*",
+                "strict": "infeas@γ*"}[feasibility]
     print(f"[info] operating point γ* = {gamma_db:g} dB")
+    print(f"[info] SINR metric        = {sinr_label}")
+    print(f"[info] feasibility def     = {feasibility}"
+          + (f" (η={eta:g})" if feasibility == "served" else ""))
     print(f"[info] SCNR metric        = {scnr_metric or '(none — panel b dropped)'}")
-    hdr = f"{'algorithm':<14}{'minSINR p50':>12}{'p05':>8}{'infeas@γ*':>11}{'SCNR p50':>11}"
+    hdr = (f"{'algorithm':<14}{sinr_label+' p50':>16}{'p05':>8}"
+           f"{feas_hdr:>16}{f'{int((1-outage_eps)*100)}%-likely':>12}{'SCNR p50':>11}")
     print(hdr)
     print("-" * len(hdr))
     for name, row in summary.items():
         p50 = row.get("sinr_p50_db");  p05 = row.get("sinr_p05_db")
-        inf = row.get("infeas_at_gamma");  sc = row.get("scnr_p50_db")
+        fv = row.get("feas_value");     lk = row.get("likely_sinr_db")
+        sc = row.get("scnr_p50_db")
         print(f"{name:<14}"
-              f"{(f'{p50:.2f}' if p50 is not None else '—'):>12}"
+              f"{(f'{p50:.2f}' if p50 is not None else '—'):>16}"
               f"{(f'{p05:.2f}' if p05 is not None else '—'):>8}"
-              f"{(f'{inf*100:.1f}%' if inf is not None else '—'):>11}"
+              f"{(f'{fv*100:.1f}%' if fv is not None else '—'):>16}"
+              f"{(f'{lk:.2f}' if lk is not None else '—'):>12}"
               f"{(f'{sc:.2f}' if sc is not None else '—'):>11}")
 
 
@@ -322,11 +444,17 @@ def build_figure(sinr_result,
                  gamma_db: float,
                  only: Optional[Sequence[str]] = None,
                  scnr_metric: Optional[str] = None,
+                 sinr_metric: str = "min",
+                 feasibility: str = FEASIBILITY_DEFAULT,
+                 eta: float = ETA_DEFAULT,
                  use_tex: bool = True):
-    """Assemble the two-panel CDF figure and return the matplotlib Figure.
+    """Assemble the two-panel CDF figure and return ``(fig, only, scnr_metric)``.
 
-    Reuses ``cordis.plotting.plot_cdf`` for both panels so styling, the γ
-    marker, and the infeasibility annotation match the rest of the toolkit.
+    Panel (a) is the CDF of the chosen per-trial SINR metric (``sinr_metric``:
+    'min' = worst-user, 'mean' = across-user) with γ\\* marked.  Each legend
+    entry is annotated with the moderate-outage feasibility scalar at γ\\*
+    (``feasibility``: 'served' = served-trial rate ≥η users, 'outage' = per-user
+    Pr(SINR<γ\\*), 'strict' = legacy all-or-nothing).
     """
     import matplotlib
     if use_tex is False:
@@ -339,6 +467,9 @@ def build_figure(sinr_result,
         # apply_paper_style may flip usetex back on; force it off for nodes
         # without a TeX install.
         matplotlib.rcParams["text.usetex"] = False
+    using_tex = bool(matplotlib.rcParams.get("text.usetex", False))
+
+    sinr_metric_name, sinr_label = _resolve_sinr_metric(sinr_metric)
 
     only = list(only) if only else _present_algorithms(sinr_result, PREFERRED)
     if scnr_metric is None:
@@ -353,20 +484,35 @@ def build_figure(sinr_result,
     )
     axes = np.atleast_1d(axes)
 
-    # ── Panel (a): min-SINR CDF at γ* ───────────────────────────────
+    # ── Panel (a): SINR CDF at γ* ───────────────────────────────────
     ax_a = axes[0]
     plot_cdf(
         sinr_result.sim_result,
-        metric=SINR_METRIC,
+        metric=sinr_metric_name,
         ax=ax_a,
-        xlabel=r"min-SINR [dB]",
+        xlabel=rf"{sinr_label} [dB]",
         only=only,
-        gamma_db=gamma_db,            # vertical γ* line + infeasibility annotation
-        annotate_infeasibility=True,
+        gamma_db=gamma_db,            # vertical γ* line
+        annotate_infeasibility=False,  # we annotate moderate-outage below
         legend_loc="lower right",     # any CDF is empty in the lower-right corner
     )
     ax_a.set_ylim(0.0, 1.0)
-    ax_a.set_title(r"(a) min-SINR CDF at $\gamma^\star$")
+    ax_a.set_title(rf"(a) {sinr_label} CDF at $\gamma^\star$")
+
+    # Re-annotate the legend with the moderate-outage feasibility scalar.
+    sinr_res = sinr_result.sim_result.algorithm_results
+    handles, labels = ax_a.get_legend_handles_labels()
+    new_labels = []
+    for h, lab in zip(handles, labels):
+        ar = sinr_res.get(lab)
+        token = None
+        if ar is not None:
+            fv = _feasibility_value(ar, gamma_db, feasibility, eta, sinr_metric_name)
+            if fv is not None:
+                token = _feas_legend_token(fv[0], fv[1], using_tex)
+        new_labels.append(f"{lab} ({token})" if token else lab)
+    if handles:
+        ax_a.legend(handles, new_labels, loc="lower right")
 
     # ── Panel (b): SCNR CDF at γ* ───────────────────────────────────
     if have_scnr:
@@ -406,6 +552,17 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--gamma-db", type=float, default=None,
                    help="Operating point γ* in dB.  Default: auto-detected "
                         f"from run metadata, else {GAMMA_DEFAULT_DB:g}.")
+    p.add_argument("--sinr-metric", choices=list(SINR_METRIC_CHOICES),
+                   default=SINR_METRIC_DEFAULT,
+                   help="SINR metric for panel (a): 'min' (worst-user) or "
+                        "'mean' (across users), per trial.")
+    p.add_argument("--feasibility", choices=("served", "outage", "strict"),
+                   default=FEASIBILITY_DEFAULT,
+                   help="How feasibility at γ* is annotated: 'served' "
+                        "(moderate, ≥η users meet γ*), 'outage' (moderate, "
+                        "per-user Pr(SINR<γ*)), or 'strict' (legacy).")
+    p.add_argument("--eta", type=float, default=ETA_DEFAULT,
+                   help="Coverage fraction η for --feasibility served.")
     p.add_argument("--scnr-metric", default=None,
                    help="SCNR metric for panel (b).  Default: first available "
                         f"of {', '.join(SCNR_METRIC_PREFERENCE)}.")
@@ -452,15 +609,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     only_resolved = list(only) if only else _present_algorithms(sinr_result, PREFERRED)
     scnr_metric = args.scnr_metric or _select_scnr_metric(scnr_result, only=only_resolved)
+    sinr_metric_name, sinr_label = _resolve_sinr_metric(args.sinr_metric)
 
     summary = collect_summary(sinr_result, scnr_result, gamma_db,
-                              only_resolved, scnr_metric)
-    _print_summary(summary, gamma_db, scnr_metric)
+                              only_resolved, scnr_metric,
+                              sinr_metric=sinr_metric_name,
+                              feasibility=args.feasibility, eta=args.eta)
+    _print_summary(summary, gamma_db, scnr_metric,
+                   sinr_label=sinr_label, feasibility=args.feasibility,
+                   eta=args.eta)
 
     fig, used_only, used_scnr_metric = build_figure(
         sinr_result, scnr_result,
         gamma_db=gamma_db, only=only_resolved,
-        scnr_metric=scnr_metric, use_tex=not args.no_tex)
+        scnr_metric=scnr_metric, sinr_metric=args.sinr_metric,
+        feasibility=args.feasibility, eta=args.eta, use_tex=not args.no_tex)
 
     out_stem = Path(args.out)
     if not out_stem.is_absolute():
@@ -473,6 +636,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         metadata={
             "Figure": "fig_cdf",
             "GammaStarDB": f"{gamma_db:g}",
+            "SinrMetric": sinr_metric_name,
+            "Feasibility": (f"{args.feasibility}(eta={args.eta:g})"
+                            if args.feasibility == "served" else args.feasibility),
             "Algorithms": ", ".join(used_only),
             "ScnrMetric": str(used_scnr_metric),
             "SinrRun": sinr_dir.name,

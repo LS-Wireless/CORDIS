@@ -1,58 +1,84 @@
-# Fig. — Communication–sensing tradeoff / feasible region
+# Fig. — Communication–sensing tradeoff / served region
 
-Built from a single `gamma_sweep` result (no runner here — you fetch the result from the
-cluster into `results/exp_gamma_sweep/` and this just loads + plots it).
+Two-panel, double-column figure for the Simulation Results section, from a
+`gamma_sweep` campaign.
 
-Two panels, double-column:
+- **(a) Tradeoff vs γ** — achieved SINR (left axis, solid) and the weighted
+  sum-SCNR (right axis, dashed, `weighted_sum_scnr_db` = Σ_t ω_t·SCNR_{a_r,t},
+  conditioned on the served/feasible trials). A grey `y = x` guide marks the
+  "target met" line on the SINR axis.
+- **(b) Served / feasible region vs γ** — where the operating region is read
+  off. The definition is selectable (see below); with the favorable config
+  CORDIS-ADMM tracks Centralized at low–mid γ and falls off at high γ.
 
-- **(a)** achieved worst-user **min-SINR** (left axis, solid + marker) and **sum-SCNR**
-  (right axis, dashed + marker, conditioned on feasibility) vs the SINR target γ. The grey
-  `y = x` line marks "target met"; where an algorithm's min-SINR peels below it, it's
-  starting to miss the constraint, and the SCNR you see there is the sensing it buys on the
-  trials it still solved.
-- **(b)** **feasibility rate** vs γ (fraction of trials whose worst user meets γ,
-  `= 1 − infeasibility_rate`). This is the operating-region panel: with the Stage-23 fixes
-  and the favorable config, CORDIS-ADMM tracks Centralized at low–mid γ and falls off at
-  high γ.
+The SINR curve and the region curve are over all successful trials; the SCNR
+is conditional on the served/feasible trials (`--scnr-all-trials` to disable).
+Centralized is the one-shot ceiling; CORDIS-ADMM/Split return their best
+feasible iterate. Per-algorithm style comes from `style_for` / `ALGORITHM_STYLE`.
 
-Feasibility uses the served/feasible definition (min-SINR ≥ γ per trial). SCNR is reported
-conditional on feasibility; min-SINR and feasibility are over all successful trials.
-Centralized is the one-shot ceiling; CORDIS-ADMM/Split return their best feasible iterate.
+## Two selectable definitions (defaults match the paper)
+
+**SINR metric — `--sinr-metric {min,mean}`** (default `min`). Panel (a)'s SINR
+curve is the per-trial worst-user SINR (`min_sinr_db`) or the across-user mean
+(`mean_sinr_db` = dB of the per-trial mean over users). The y-axis label and the
+legend's solid-line key update accordingly.
+
+**Feasibility / region — `--feasibility {served,outage,strict}`** (default
+`served`), following `cordis/metrics/outage.py`:
+
+- `served` (**moderate, default**) — served-trial rate: fraction of trials in
+  which at least η of users meet γ (`--eta`, default 0.9). Panel (b) and the
+  conditional-SCNR mask both use it.
+- `outage` (moderate) — per-user coverage `1 − Pr(SINR_u < γ)` over the
+  (user, trial) pool. SCNR is then conditioned over all trials (the per-user
+  view has no per-trial served mask).
+- `strict` (legacy) — `1 − infeasibility_rate(γ, sinr_metric)` (all-or-nothing,
+  the old behaviour); SCNR conditioned over strictly-feasible trials.
+
+Panel (b)'s y-label and title adapt to the mode ("served region" / "coverage" /
+"feasible region"). The moderate definitions are the operating point cell-free /
+massive-MIMO papers actually report.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `build_fig_cs_tradeoff.py` | Headless builder **and** importable module (`load_sweep`, `collect_curves`, `build_figure`). Writes `../../figures/fig_cs_tradeoff.pdf`. |
-| `fig_cs_tradeoff.ipynb` | Interactive front-end. Imports the module for the canonical build **and** carries an editable copy of `build_figure` for live tweaking + a style-override cell. |
+| `build_fig_cs_tradeoff.py` | Headless builder **and** importable module (loader, `collect_curves`, `build_figure`). Writes `../../figures/fig_cs_tradeoff.pdf`. |
+| `fig_cs_tradeoff.ipynb` | Interactive front-end. The **committed PDF is built from the module** (`B.build_figure`) for reproducibility; a verbatim, IEEE-styled `build_figure_editable` cell is provided for live tweaking (carries the same `sinr_metric` / `feasibility` / `eta` options). |
+| `README.md` | This file. |
 
-## Recommended γ grid
-
-`[0, 2.5, 5, 7.5, 10, 12.5, 15]` dB — a clean 2.5 dB grid that includes the operating point
-γ\*=5 (consistent with the CDF figures) and reaches into the infeasible regime so panel (b)
-shows the fall-off. If Centralized is still near-feasible at 15 dB, extend to 17.5/20; if
-ADMM/Split are already near-zero feasibility by 12.5–15, the conditional-SCNR points there
-get noisy or drop out (visible gaps), which is expected.
+No runner — point the builder at a `gamma_sweep` run (or let it auto-discover
+the newest under `results/exp_gamma_sweep/`).
 
 ## How to build
 
 ```bash
-# After copying a gamma_sweep result into results/exp_gamma_sweep/:
+# Newest run; moderate 'served' region (η=0.9), worst-user SINR:
 python3 paper/figure_src/fig_cs_tradeoff/build_fig_cs_tradeoff.py
-#   --no-tex                 on a node without pdflatex
-#   --result-dir <dir>       pin a specific run (e.g. an array_*_aggregated dir)
-#   --scnr-all-trials        SCNR over all trials instead of feasible-only
-#   --no-sinr-band           hide the SINR IQR band in panel (a)
-#   --feas-percent           feasibility as %  instead of [0,1]
-#   --only "Centralized,CORDIS-ADMM,CORDIS-Split"   which algorithms to plot
+
+# Mean-SINR axis + per-user coverage; no pdflatex:
+python3 paper/figure_src/fig_cs_tradeoff/build_fig_cs_tradeoff.py \
+    --sinr-metric mean --feasibility outage --no-tex
+
+# Legacy strict definition, pinned run:
+python3 paper/figure_src/fig_cs_tradeoff/build_fig_cs_tradeoff.py \
+    --feasibility strict --result-dir results/exp_gamma_sweep/<ts>
 ```
 
-Or open `fig_cs_tradeoff.ipynb` and Run-All.
+Other flags: `--eta`, `--scnr-all-trials`, `--no-sinr-band`, `--feas-percent`,
+`--only`, `--out`. The builder prints the region rate by γ for a sanity check.
 
-## Config
+## γ grid
 
-`gamma_sweep` is run with the favorable defaults (n_ap=10, n_ant=16, pilot 128 dB, κ=0.08,
-clutter offset) and the all_algorithms spec set; the builder filters to
-Centralized / CORDIS-ADMM / CORDIS-Split via `--only`. The γ values come straight from the
-sweep result's keys, so the figure adapts to whatever grid you ran.
+`[0, 2.5, 5, 7.5, 10, 12.5, 15]` (clean 2.5 dB spacing; includes γ\*=5 for
+cross-figure consistency; reaches into the infeasible regime so panel (b) shows
+the fall-off). The builder reads the γ values from the result keys, so changing
+the grid needs no code edit.
+
+## Note on the region definition vs the SINR metric
+
+The moderate metrics (`served`, `outage`) are computed on the per-user SINR pool
+/ per-user coverage and are therefore **independent of `--sinr-metric`**, which
+only changes the plotted SINR curve in panel (a). Only `strict` uses the chosen
+SINR metric to classify feasibility.
 
