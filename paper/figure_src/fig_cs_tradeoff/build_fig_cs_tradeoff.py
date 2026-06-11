@@ -133,7 +133,7 @@ def load_sweep(result_dir: Optional[Path] = None,
                 f"{REPO_ROOT/'results'/('exp_'+experiment)}. "
                 f"Copy a run there or pass --result-dir."
             )
-    res = ExperimentResult.load(Path(result_dir))
+    res = ExperimentResult.load(Path(REPO_ROOT / result_dir))
     if res.kind != "sweep":
         raise ValueError(
             f"{result_dir} holds a {res.kind!r} result, expected 'sweep'."
