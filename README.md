@@ -14,14 +14,6 @@ coordinated through consensus ADMM, with fronthaul and per-AP computation indepe
 
 </div>
 
-<p align="center">
-  <img src="paper/figures/fig_lowrank_outage.png" alt="CORDIS-ADMM tracks the centralized bound in the locally low-rank regime" width="620">
-  <br>
-  <sub><b>CORDIS-ADMM</b> coordinates beamformers across APs and tracks the centralized bound on both
-  communication outage and target SCNR, even in the locally low-rank regime (<code>N_UE &gt; M</code>) where
-  the lightweight CORDIS-Split saturates.</sub>
-</p>
-
 ---
 
 ## Overview
