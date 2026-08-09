@@ -244,6 +244,9 @@ pip-wheel-metadata/
 docs/_build/
 docs/api/
 site/
+CLAUDE.md
+drafts/*
+!drafts/README.md
 
 
 # =============================================================================
