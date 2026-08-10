@@ -278,3 +278,7 @@ tmp_*.txt
 # Log files written by the simulation runner
 *.log
 logs/
+
+
+# Local files, snapshots, and planning notes that should not be committed
+.local/
