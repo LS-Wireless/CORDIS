@@ -1,0 +1,109 @@
+{
+  "_provenance": {
+    "document": "3GPP TR 38.901",
+    "version": "V19.4.0",
+    "clause": "7.4-7.5 (channel models)",
+    "tables": [
+      "7.4.1-1 (path loss + shadow fading)",
+      "7.4.2-1 (LoS probability)",
+      "7.5-6 (large-scale parameters)",
+      "7.5-7 (UMi ZSD)"
+    ],
+    "source_repo": "/Users/mehdi/Local-Drive/GitHub/3gpp-tr-library/TR-38.901/v19.4.0/07-channel-models",
+    "source_repo_verification": "INDEX.md marks 7.4 and 7.5 verified 2026-07-19",
+    "extracted_by": ".local/verification/stage-02 (CORDIS verification, Stage 2)",
+    "extracted_on": "2026-08-10",
+    "note": "Self-contained snapshot. Tests must read THIS file, never the sibling repo, so the suite stays runnable on any machine."
+  },
+  "scenario": "UMi-StreetCanyon",
+  "carrier_freq_ghz": 3.5,
+  "geometry": {
+    "h_bs_m": 10.0,
+    "h_ut_m": 1.5,
+    "d_2d_min_m": 10.0,
+    "d_2d_max_m": 5000.0,
+    "h_e_m": 1.0,
+    "note": "Table 7.4.1-1 applicability: 1.5 <= h_UT <= 22.5, h_BS = 10 m"
+  },
+  "path_loss": {
+    "los": {
+      "pl1": {
+        "const": 32.4,
+        "log10_d3d_coeff": 21.0,
+        "log10_fc_coeff": 20.0
+      },
+      "pl2": {
+        "const": 32.4,
+        "log10_d3d_coeff": 40.0,
+        "log10_fc_coeff": 20.0,
+        "breakpoint_term_coeff": -9.5
+      },
+      "breakpoint": "d'_BP = 4 (h_BS - h_E)(h_UT - h_E) f_c / c"
+    },
+    "nlos_prime": {
+      "log10_d3d_coeff": 35.3,
+      "const": 22.4,
+      "log10_fc_coeff": 21.3,
+      "h_ut_coeff": -0.3,
+      "h_ut_ref_m": 1.5
+    },
+    "nlos_rule": "PL_NLOS = max(PL_LOS, PL'_NLOS)"
+  },
+  "shadow_fading_std_db": {
+    "los": 4.0,
+    "nlos": 7.82
+  },
+  "los_probability": {
+    "d_threshold_m": 18.0,
+    "decay_m": 36.0,
+    "formula": "1 for d<=18; 18/d + exp(-d/36)(1 - 18/d) otherwise"
+  },
+  "rician_k_db": {
+    "mu": 9.0,
+    "sigma": 5.0
+  },
+  "corr_distance_sf_m": {
+    "los": 10.0,
+    "nlos": 13.0
+  },
+  "angular_spread_deg_at_3p5ghz": {
+    "_formulas": {
+      "los": {
+        "mu_lgASD": "-0.05 log10(1+ fc) + 1.21 see note 9",
+        "mu_lgASA": "-0.07 log10(1+ fc) + 1.66, see note 8",
+        "mu_lgZSA": "-0.11 log10(1+ fc) + 0.81 see note 8"
+      },
+      "nlos": {
+        "mu_lgASD": "-0.24 log10(1+ fc) + 1.54 see note 8",
+        "mu_lgASA": "-0.07 log10(1+ fc) + 1.76, see note 8",
+        "mu_lgZSA": "-0.03 log10(1+ fc) + 0.92 see note 8"
+      },
+      "zsd": {
+        "los": "max[-0.5, -2.1(d2D/1000) - 0.01(hUT-1.5) + 0.75]",
+        "nlos": "max[-0.5, -2.1(d2D/1000) - 0.01(hUT-1.5) + 0.9]"
+      }
+    },
+    "los": {
+      "asd": 15.0432,
+      "asa": 41.141,
+      "zsa": 5.472,
+      "zsd_at_650m": 0.3162
+    },
+    "nlos": {
+      "asd": 24.1673,
+      "asa": 51.7935,
+      "zsa": 7.9507,
+      "zsd_at_650m": 0.3428
+    }
+  },
+  "other_scenarios_shadow_fading_std_db": {
+    "UMa": {
+      "los": 4.0,
+      "nlos": 6.0
+    },
+    "RMa": {
+      "los_note": "4 dB (10 m <= d2D < dBP); 6 dB (dBP <= d2D < 10 km)",
+      "nlos": 8.0
+    }
+  }
+}

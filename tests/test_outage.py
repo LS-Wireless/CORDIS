@@ -1,21 +1,21 @@
 """
-test/test_outage.py
-===================
+tests/test_outage.py
+====================
 Tests for the outage/coverage feasibility metrics in
-``cordis.metrics.outage``.
+``cordis.metrics.outage``, the module every feasibility claim in the paper's
+Section VI rests on (``P_out``, coverage, served-trial rate).
 
 Run from the repo root::
 
-    PYTHONPATH=. pytest test/test_outage.py -v
-    # or as a plain script:
-    PYTHONPATH=. python3 test/test_outage.py
+    pytest tests/test_outage.py -v
+
+``sys.path`` setup lives in ``tests/conftest.py``; this module does not need it.
+
+Stage 5 of the verification plan extends this file with the missing cases
+(percentile convention, the ``>= eta`` boundary, and the ``eta * gamma_db``
+call made by ``fig_cdf``).
 """
 import numpy as np
-import sys
-from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT))
 
 from cordis.metrics.outage import (
     outage_probability, likely_sinr_db, coverage_per_trial,
@@ -130,20 +130,3 @@ def test_none_stats_guards():
     r.sinr_stats = None
     assert np.isnan(_ar_served_trial_rate(r, 5.0))
     assert _ar_coverage_per_trial(r, 5.0).size == 0
-
-
-if __name__ == "__main__":
-    # Plain-script fallback (no pytest): run every test_* and report.
-    fns = [v for k, v in sorted(globals().items())
-           if k.startswith("test_") and callable(v)]
-    failed = 0
-    for fn in fns:
-        try:
-            fn()
-            print(f"  PASS  {fn.__name__}")
-        except AssertionError as e:
-            failed += 1
-            print(f"  FAIL  {fn.__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
-    raise SystemExit(1 if failed else 0)
-
