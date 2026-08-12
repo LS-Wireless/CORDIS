@@ -170,3 +170,110 @@ def skip_if_no_cvxpy() -> None:
 def require_cvxpy():
     """Fixture form of :func:`skip_if_no_cvxpy`."""
     skip_if_no_cvxpy()
+
+
+# =============================================================================
+# Full-pipeline scenarios for the algorithm stages
+# =============================================================================
+
+def build_pipeline_scenario(cfg, seed: int = 808):
+    """
+    Run the whole channel pipeline once and return the tuple every algorithm
+    entry point takes: ``(topo, cfg, est, sensing_stats, assoc, sigma, Pmax)``.
+
+    This mirrors what :class:`cordis.simulation.scenario.Scenario` assembles,
+    but without the runner machinery, so an algorithm test depends only on the
+    channel layer.
+    """
+    from cordis.channel.estimation import (
+        design_pilot_sequences, run_channel_estimation,
+    )
+    from cordis.channel.pathloss import (
+        compute_large_scale_fading, noise_power_watts, snr_to_tx_power,
+    )
+    from cordis.channel.rician import (
+        compute_channel_statistics, generate_channel_realization,
+    )
+    from cordis.channel.sensing_assignment import assign_sensing
+    from cordis.channel.sensing_channel import compute_sensing_statistics
+    from cordis.channel.topology import generate_topology
+    from cordis.utils.io_utils import child_rng, make_rng
+
+    r = make_rng(seed)
+    topo = generate_topology(cfg, child_rng(r))
+    lsf = compute_large_scale_fading(topo, cfg, child_rng(r))
+    st = compute_channel_statistics(topo, cfg, lsf, child_rng(r))
+    real = generate_channel_realization(topo, cfg, lsf, st, child_rng(r))
+    Phi, cs = design_pilot_sequences(topo.n_ue, cfg.channel.tau_p, child_rng(r))
+    est = run_channel_estimation(topo, cfg, lsf, st, real, child_rng(r), Phi, cs)
+    ss = compute_sensing_statistics(topo, cfg, lsf, child_rng(r))
+    assoc = assign_sensing(topo, cfg, lsf)
+    sigma = noise_power_watts(cfg.frequency.bandwidth_hz,
+                              cfg.channel.noise_figure_db,
+                              cfg.channel.noise_temp_k)
+    Pmax = snr_to_tx_power(cfg.channel.snr_db, sigma)
+    return topo, cfg, est, ss, assoc, sigma, Pmax
+
+
+def _sized_cfg(default_cfg, n_ap, n_ant, n_ue, n_targets=1, n_spatial=800):
+    import copy
+    cfg = copy.deepcopy(default_cfg)
+    cfg.topology.n_ap = n_ap
+    cfg.topology.n_ant = cfg.topology.n_rf_chains = n_ant
+    cfg.topology.n_ue = n_ue
+    cfg.topology.n_targets = n_targets
+    cfg.topology.n_sensing_rx = 1
+    cfg.channel.n_spatial_samples = n_spatial
+    cfg.validate()
+    return cfg
+
+
+@pytest.fixture(scope="module")
+def centralized_scenario(default_cfg):
+    """
+    A **well-provisioned** scenario: 8 APs of 12 antennas serving 3 users and
+    one target. Large enough that the centralized SOCP is comfortably
+    feasible at the default ``gamma = 5`` dB, small enough to solve quickly.
+    """
+    skip_if_no_cvxpy()
+    return build_pipeline_scenario(
+        _sized_cfg(default_cfg, n_ap=8, n_ant=12, n_ue=3), seed=3000)
+
+
+@pytest.fixture(scope="module")
+def small_centralized_scenario(default_cfg):
+    """
+    An **under-provisioned** scenario: 4 APs of 6 antennas for 3 users and a
+    target. The SINR floor is out of reach here, which is the regime that
+    exposes F-07-02.
+    """
+    skip_if_no_cvxpy()
+    return build_pipeline_scenario(
+        _sized_cfg(default_cfg, n_ap=4, n_ant=6, n_ue=3, n_spatial=600),
+        seed=909)
+
+
+@pytest.fixture(scope="module")
+def benchmark_scenario(default_cfg):
+    """Mid-sized scenario shared by the benchmark-registry tests."""
+    skip_if_no_cvxpy()
+    return build_pipeline_scenario(
+        _sized_cfg(default_cfg, n_ap=6, n_ant=8, n_ue=3, n_targets=2,
+                   n_spatial=600),
+        seed=515)
+
+
+@pytest.fixture(scope="module")
+def admm_scenario(default_cfg):
+    """
+    Scenario for the CORDIS-ADMM loop-control tests (Stage 8b).
+
+    4 APs of 8 antennas, 3 users, one target: small enough that a 12-to-40
+    iteration ADMM run finishes in a few seconds, large enough that the default
+    ``gamma = 5`` dB is comfortably reachable so feasibility-dependent branches
+    (best-iterate selection, the early-stop gate) are actually exercised.
+    """
+    skip_if_no_cvxpy()
+    return build_pipeline_scenario(
+        _sized_cfg(default_cfg, n_ap=4, n_ant=8, n_ue=3, n_spatial=600),
+        seed=717)

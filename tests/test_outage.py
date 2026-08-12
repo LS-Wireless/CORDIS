@@ -130,3 +130,125 @@ def test_none_stats_guards():
     r.sinr_stats = None
     assert np.isnan(_ar_served_trial_rate(r, 5.0))
     assert _ar_coverage_per_trial(r, 5.0).size == 0
+
+
+# =====================================================================
+# Stage 5 additions: percentile convention, the eta boundary, and the
+# eta * gamma_db call that build_fig_cdf.py makes.
+# =====================================================================
+
+import pytest
+
+
+def test_outage_uses_a_strict_inequality():
+    """
+    `P_out(gamma) = Pr(SINR < gamma)`, strict. A user sitting exactly on the
+    floor counts as served, which is what makes `P_out` and `coverage` exact
+    complements.
+    """
+    on_floor = np.array([5.0, 5.0, 5.0])
+    assert outage_probability(on_floor, 5.0) == 0.0
+    assert outage_probability(on_floor, 5.0001) == 1.0
+
+
+def test_outage_and_coverage_are_complements():
+    """`P_out(gamma)` over the pool equals `1 - mean(coverage_per_trial)`."""
+    p = outage_probability(FLAT, GAMMA)
+    c = coverage_per_trial(SINR, GAMMA).mean()
+    assert p + c == pytest.approx(1.0)
+
+
+def test_served_uses_a_non_strict_eta_comparison():
+    """
+    `served_trial_rate` counts a trial when coverage is `>= eta`, not `> eta`.
+
+    With 3 users the achievable coverages are 0, 1/3, 2/3, 1. At `eta = 2/3`
+    the boundary trial must count as served; a strict `>` would drop it and
+    silently lower every served rate in Fig. 2's right panel.
+    """
+    cov = coverage_per_trial(SINR, GAMMA)
+    np.testing.assert_allclose(cov, [2 / 3, 1.0, 1.0, 1 / 3])
+    assert served_trial_rate(SINR, GAMMA, 2 / 3) == pytest.approx(0.75)
+    assert served_trial_rate(SINR, GAMMA, 2 / 3 + 1e-9) == pytest.approx(0.5)
+
+
+def test_served_at_eta_one_matches_the_strict_criterion():
+    """`eta = 1` means every user must clear gamma, i.e. the legacy metric."""
+    assert served_trial_rate(SINR, GAMMA, 1.0) == pytest.approx(
+        1.0 - strict_infeasibility_rate(SINR, GAMMA))
+
+
+def test_likely_sinr_uses_the_linear_percentile_convention():
+    """
+    `likely_sinr_db(eps)` is `numpy.percentile(pool, 100 eps)`, i.e. linear
+    interpolation between order statistics, not a nearest-rank quantile.
+    """
+    assert likely_sinr_db(FLAT, 0.0) == pytest.approx(FLAT.min())
+    assert likely_sinr_db(FLAT, 1.0) == pytest.approx(FLAT.max())
+    assert likely_sinr_db(FLAT, 0.5) == pytest.approx(np.percentile(FLAT, 50))
+
+
+def test_likely_sinr_inverts_outage_probability():
+    """
+    `outage_probability(likely_sinr_db(eps)) ~ eps`, the identity the module
+    docstring claims.
+
+    On a finite pool the two can differ by up to one sample, because
+    `likely_sinr_db` interpolates between order statistics while
+    `outage_probability` counts them. The tolerance is therefore `1/n`, not
+    zero, and the test uses a pool large enough for that to be meaningful.
+    """
+    rng = np.random.default_rng(0)
+    pool = rng.normal(5.0, 6.0, size=4000)
+    for eps in (0.05, 0.1, 0.25, 0.5):
+        g = likely_sinr_db(pool, eps)
+        assert outage_probability(pool, g) == pytest.approx(
+            eps, abs=2.0 / pool.size)
+
+
+def test_outage_is_monotone_in_the_threshold():
+    prev = -1.0
+    for g in (-10.0, 0.0, 2.0, 5.0, 9.0, 50.0):
+        cur = outage_probability(FLAT, g)
+        assert cur >= prev
+        prev = cur
+
+
+def test_served_rate_is_monotone_in_eta():
+    prev = 2.0
+    for eta in (0.0, 0.25, 0.5, 0.75, 1.0):
+        cur = served_trial_rate(SINR, GAMMA, eta)
+        assert cur <= prev + 1e-12
+        prev = cur
+
+
+def test_scaling_the_db_threshold_by_eta_is_not_a_coverage_relaxation():
+    """
+    Pins F-05-01. `build_fig_cdf.py:334` calls
+    `outage_probability(flat, eta * gamma_db)` in its `outage` mode.
+
+    `eta` is a fraction of users. Multiplying a dB threshold by it evaluates the
+    outage at a **different SINR target** (4.5 dB instead of 5 dB), which is not
+    a relaxation of the coverage requirement and is not dimensionally meaningful:
+    the same `eta` applied to a target of 0 dB would leave it unchanged, and
+    applied to a negative target would raise it.
+    """
+    eta, gamma = 0.9, 5.0
+    rng = np.random.default_rng(1)
+    pool = rng.normal(5.0, 6.0, size=20000)
+    shifted = outage_probability(pool, eta * gamma)
+    correct = outage_probability(pool, gamma)
+    assert correct > shifted, (shifted, correct)
+    assert correct - shifted > 0.01
+
+    # The scaling is not a coverage relaxation: it does nothing at a 0 dB
+    # target and *raises* the threshold for a negative one, so its effect
+    # depends on where the target happens to sit on the dB axis.
+    assert eta * 0.0 == 0.0
+    assert eta * -10.0 > -10.0
+
+
+def test_empty_and_degenerate_inputs_are_handled():
+    assert np.isnan(strict_infeasibility_rate(np.zeros((0, 3)), 5.0))
+    assert coverage_per_trial(np.zeros(5), 5.0).size == 0        # not 2-D
+    assert np.isnan(served_trial_rate(np.zeros((0, 2)), 5.0, 0.9))
